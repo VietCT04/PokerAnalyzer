@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from zipfile import BadZipFile
 
 from hand_history import HEADER, hands_in_zip, normalize_id
+from identity import DEFAULT_ACCOUNT, account_label
 from poker_analyzer import STATS_COLUMNS, connect, coverage_summary, import_batch, statistics
 
 
@@ -33,18 +34,7 @@ IMPORT_ERRORS = (OSError, ValueError, sqlite3.Error, BadZipFile, csv.Error, Runt
 
 
 def dashboard_data(db):
-    conflicts = db.execute("""
-        SELECT COUNT(*) FROM mapping_candidates c
-        WHERE NOT EXISTS (SELECT 1 FROM identity_mappings m
-                          WHERE (m.session_id, m.token, m.nickname) = (c.session_id, c.token, c.nickname))
-    """).fetchone()[0]
-    conflicts += db.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT h.numeric_id FROM hands h WHERE h.numeric_id IN (SELECT hand_id FROM winner_observations)
-            GROUP BY h.numeric_id HAVING COUNT(*) > 1
-        )
-    """).fetchone()[0]
-    return {**coverage_summary(db), "conflicts": conflicts,
+    return {**coverage_summary(db),
             "players": [dict(zip(STATS_COLUMNS, row)) for row in statistics(db)]}
 
 
@@ -54,29 +44,24 @@ def analyze_dashboard(db):
         data = dashboard_data(db)
         previous = db.execute("SELECT summary, mapping_keys FROM dashboard_analysis WHERE id = 1").fetchone()
         previous_hands = json.loads(previous["summary"])["hands"] if previous else 0
-        previous_keys = {tuple(key) for key in json.loads(previous["mapping_keys"])} if previous else set()
+        previous_keys = {
+            (DEFAULT_ACCOUNT, *key) if len(key) == 5 else tuple(key)
+            for key in json.loads(previous["mapping_keys"])
+        } if previous else set()
         mapping_keys = {tuple(row) for row in db.execute("""
-            SELECT s.scope, s.table_name, s.tournament, m.token, m.nickname
+            SELECT m.source_account, s.scope, s.table_name, s.tournament, m.token, m.nickname
             FROM identity_mappings m JOIN sessions s ON s.id = m.session_id
         """)}
-        direct = db.execute("""
-            SELECT COUNT(*) FROM (
-                SELECT DISTINCT e.hand_id, e.token
-                FROM mapping_evidence e JOIN identity_mappings m
-                  ON (m.session_id, m.token, m.nickname) = (e.session_id, e.token, e.nickname)
-                JOIN appearances a ON (a.hand_id, a.token) = (e.hand_id, e.token)
-                WHERE NOT a.sitting_out
-            )
-        """).fetchone()[0]
         summary = {
+            "identity_model": "timestamp",
             "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "initial": previous is None,
             "hands": data["hands"],
             "new_hands": max(0, data["hands"] - previous_hands),
             "new_mappings": len(mapping_keys - previous_keys),
             "removed_mappings": len(previous_keys - mapping_keys),
-            "direct": direct,
-            "propagated": data["identified"] - direct,
+            "direct": data["direct"],
+            "propagated": data["inferred"],
             "conflicts": data["conflicts"],
             "unlinked": data["unlinked"],
         }
@@ -87,10 +72,10 @@ def analyze_dashboard(db):
     return {**data, "analysis": summary}
 
 
-def import_files(db_path, files):
+def import_files(db_path, files, source_account=DEFAULT_ACCOUNT):
     counts = Counter()
     with closing(connect(db_path)) as db:
-        for _, result in import_batch(db, db_path, files):
+        for _, result in import_batch(db, db_path, files, source_account=source_account):
             counts.update(result)
     return dict(counts)
 
@@ -133,9 +118,10 @@ def zip_signatures(directory):
 
 
 class ImportJob:
-    def __init__(self, db_path, downloads):
+    def __init__(self, db_path, downloads, source_account):
         self.db_path = db_path
         self.downloads = downloads
+        self.source_account = source_account
         self.lock = threading.Lock()
         self.state = {"id": 0, "status": "idle"}
 
@@ -154,7 +140,7 @@ class ImportJob:
                     writer = csv.writer(stream)
                     writer.writerow(("hand_id", "winner_nickname"))
                     writer.writerows(records)
-                counts = import_files(self.db_path, [capture])
+                counts = import_files(self.db_path, [capture], self.source_account)
             job_id = self.state["id"] + 1
             self.state = {"id": job_id, "status": "waiting", "observations": len(records), "partial": partial}
         threading.Thread(target=self.watch, args=(job_id, records, before, counts), daemon=True).start()
@@ -190,7 +176,7 @@ class ImportJob:
                         continue
                     if not self.transition(job_id, "waiting", "importing", file=path.name):
                         return
-                    counts = {**capture_counts, **import_files(self.db_path, [path])}
+                    counts = {**capture_counts, **import_files(self.db_path, [path], self.source_account)}
                     self.transition(job_id, "importing", "complete", counts=counts)
                     return
                 time.sleep(0.5)
@@ -269,7 +255,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         data = dashboard_data(db)
                         previous = db.execute("SELECT summary FROM dashboard_analysis WHERE id = 1").fetchone()
                         if previous:
-                            data["analysis"] = json.loads(previous["summary"])
+                            summary = json.loads(previous["summary"])
+                            if summary.get("identity_model") == "timestamp":
+                                data["analysis"] = summary
                         self.send_json(data)
                     else:
                         stream = io.StringIO(newline="")
@@ -307,7 +295,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif route == "/api/import":
                 with TemporaryDirectory(dir=job.db_path.parent) as folder:
                     files = uploaded_files(body, self.headers.get("Content-Type", ""), Path(folder))
-                    self.send_json({"counts": import_files(job.db_path, files)})
+                    self.send_json({"counts": import_files(job.db_path, files, job.source_account)})
             elif route == "/api/analyze":
                 with closing(connect(job.db_path)) as db:
                     self.send_json(analyze_dashboard(db))
@@ -317,12 +305,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
 
-def make_server(db_path, downloads, port=PORT):
+def make_server(db_path, downloads, port=PORT, source_account=DEFAULT_ACCOUNT):
+    account = account_label(source_account)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", port), DashboardHandler)
     server.host = f"127.0.0.1:{server.server_port}"
     server.url = "http://" + server.host
-    server.job = ImportJob(db_path, downloads)
+    server.job = ImportJob(db_path, downloads, account)
     return server
 
 
@@ -330,10 +319,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=Path("research-data/poker.sqlite"))
     parser.add_argument("--downloads", type=Path, default=Path.home() / "Downloads")
+    parser.add_argument("--account", default=DEFAULT_ACCOUNT, help="source account label for this dashboard")
     parser.add_argument("--open", action="store_true", help="Open the dashboard in your browser")
     args = parser.parse_args()
     try:
-        with make_server(args.db.resolve(), args.downloads.resolve()) as server:
+        with make_server(args.db.resolve(), args.downloads.resolve(), source_account=args.account) as server:
             print(f"PokerAnalyzer dashboard: {server.url}")
             print(f"Watching for new exports in: {server.job.downloads}")
             if args.open:
@@ -341,7 +331,7 @@ def main():
             server.serve_forever()
     except KeyboardInterrupt:
         return
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         parser.exit(1, f"Dashboard could not start: {exc}\n")
 
 

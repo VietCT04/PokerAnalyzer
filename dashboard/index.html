@@ -16,7 +16,7 @@
   </header>
   <main class="shell">
     <div class="page-heading">
-      <div><h1>Hand history</h1><p>Import PokerCraft exports and review verified player statistics.</p></div>
+      <div><h1>Hand history</h1><p>Import PokerCraft exports and review player statistics.</p></div>
       <div class="page-actions">
         <a class="button secondary" href="/stats.csv" download>Export stats CSV</a>
         <button class="button primary" type="button" id="analyze">Sync &amp; analyze</button>
@@ -24,9 +24,9 @@
     </div>
     <section class="metrics" aria-label="Database coverage">
       <article class="metric"><h2>Hands imported</h2><strong id="hands">—</strong><p id="net">Reconciled net</p></article>
-      <article class="metric"><h2>Identity coverage</h2><strong id="coverage">—</strong><progress id="coverage-bar" max="100" value="0" aria-label="Identity coverage"></progress><p id="appearances">Identified appearances</p></article>
+      <article class="metric"><h2>Identity coverage</h2><strong id="coverage">—</strong><progress id="coverage-bar" max="100" value="0" aria-label="Identity coverage"></progress><p id="appearances">Identified appearances</p><p id="coverage-methods"></p></article>
       <article class="metric"><h2>Verified mappings</h2><strong id="mappings">—</strong><p>Scoped winner evidence</p></article>
-      <article class="metric"><h2>Conflicting matches</h2><strong id="conflicts">—</strong><p>Excluded from player stats</p></article>
+      <article class="metric"><h2>Unresolved conflicts</h2><strong id="conflicts">—</strong><p>Conflicting appearances and hand IDs</p></article>
     </section>
     <section class="panel import-panel" aria-labelledby="import-title">
       <div class="import-description">
@@ -54,13 +54,13 @@
         <div><dt>New hands</dt><dd id="analysis-hands"></dd></div>
         <div><dt>Mappings added</dt><dd id="analysis-added"></dd></div>
         <div><dt>Mappings removed</dt><dd id="analysis-removed"></dd></div>
-        <div><dt>Identified via session</dt><dd id="analysis-propagated"></dd></div>
+        <div><dt>Inferred by timestamp</dt><dd id="analysis-propagated"></dd></div>
       </dl>
       <p id="analysis-evidence"></p>
     </section>
     <section class="panel player-panel" aria-labelledby="players-title">
       <div class="player-heading">
-        <div><h2 id="players-title">Player statistics</h2><p id="player-count">Verified nicknames</p></div>
+        <div><h2 id="players-title">Player statistics</h2><p id="player-count">Identified nicknames</p></div>
         <label class="search-label">
           <span>Filter by nickname</span>
           <input id="search" type="search" placeholder="Search nickname" autocomplete="off">

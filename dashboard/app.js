@@ -37,7 +37,7 @@ function describeImport(counts) {
     results.push(countLabel(counts.added, "new hand"));
     if (counts.duplicate) results.push(countLabel(counts.duplicate, "duplicate hand"));
     if (counts.scoped) results.push(countLabel(counts.scoped, "hand linked to a session"));
-    const conflicts = (counts["content conflict"] || 0) + (counts["session conflict"] || 0);
+    const conflicts = (counts["content conflict"] || 0) + (counts["session conflict"] || 0) + (counts["account conflict"] || 0);
     if (conflicts) results.push(countLabel(conflicts, "skipped conflicting hand"));
   }
   if ("observations" in counts) results.push(countLabel(counts.observations, "new winner observation"));
@@ -59,9 +59,11 @@ function playerRow(player) {
   const row = document.createElement("tr");
   const mark = (value) => value === "" ? "—" : value + "%";
   const tone = (value) => Number(value) > 0 ? "gain" : Number(value) < 0 ? "loss" : "";
+  const identity = `${number.format(player.direct_hands)} direct · ${number.format(player.inferred_hands)} inferred`;
+  const handDetail = player.total_observed_hands !== player.observed_hands_in_unit
+    ? `${number.format(player.total_observed_hands)} total · ${identity}` : identity;
   cell(row, player.nickname, player.unit);
-  cell(row, number.format(player.observed_hands_in_unit),
-    player.total_observed_hands !== player.observed_hands_in_unit ? `${number.format(player.total_observed_hands)} total` : "");
+  cell(row, number.format(player.observed_hands_in_unit), handDetail);
   cell(row, mark(player.vpip_pct), countLabel(player.preflop_opportunities, "decision"));
   cell(row, mark(player.pfr_pct));
   cell(row, mark(player.three_bet_pct), countLabel(player.three_bet_opportunities, "chance"));
@@ -85,7 +87,7 @@ function renderPlayers() {
     else th.removeAttribute("aria-sort");
   }
   byId("players").replaceChildren(...matching.slice(0, limit).map(playerRow));
-  byId("player-count").textContent = countLabel(new Set(matching.map((row) => row.nickname)).size, "verified nickname");
+  byId("player-count").textContent = countLabel(new Set(matching.map((row) => row.nickname)).size, "identified nickname");
   byId("empty").hidden = !!matching.length;
   byId("empty").textContent = players.length ? "No nicknames match your search." : "Player stats appear after a winner CSV matches imported hands.";
   byId("more").hidden = matching.length <= limit;
@@ -98,6 +100,7 @@ function renderDashboard(data) {
   byId("coverage").textContent = percent.format(coverage) + "%";
   byId("coverage-bar").value = coverage;
   byId("appearances").textContent = `${number.format(data.identified)} of ${number.format(data.appearances)} appearances`;
+  byId("coverage-methods").textContent = `${number.format(data.direct)} direct · ${number.format(data.inferred)} inferred`;
   byId("mappings").textContent = number.format(data.mappings);
   byId("conflicts").textContent = number.format(data.conflicts);
   players = data.players;

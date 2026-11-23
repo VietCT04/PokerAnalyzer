@@ -18,11 +18,11 @@ The dashboard opens at `http://127.0.0.1:8766/`. It uses `research-data/poker.sq
 - **New PokerCraft batch**. Reload the unpacked extension, select the sessions in Rush & Cash, open Game History, and start on page 1. Click **Download & import** once and keep the popup open while it captures pages. The extension triggers PokerCraft’s original ZIP download and opens the dashboard. The local importer waits up to three minutes for a newly saved ZIP that contains a hand ID from this capture. If Chrome prompts for a save location, choose the watched folder. One click handles one native ZIP export.
 - **Statistics**. Click **Sync & analyze** after importing to refresh from SQLite and see new hands, added and removed mappings, and identification via each session. The first run covers all saved hands. Later runs compare against the last analysis, even after restarting the dashboard. Filter by nickname, sort columns, and export the CSV.
 
-For recognized native Rush & Cash exports, each TXT member defines its own session. A verified winner mapping also identifies that token in other hands in the same member, including hands the player lost, even when the table changes. Reimport the original ZIP to apply this to hands already stored with a hand-local scope. Other formats use direct winner evidence until you supply a session with the CLI.
+For recognized native Rush & Cash exports, each TXT member defines its own session. Winner evidence can identify the same token in other hands in that session, including hands the player lost. The dashboard labels those assignments **inferred**. Reimport the original ZIP to apply this to hands already stored with a hand-local scope. Other formats use direct winner evidence until you supply a session with the CLI.
 
 ## Raw archive and recovery
 
-The dashboard and CLI keep the original imported ZIPs and CSVs in a sibling archive. The default is `research-data/poker.raw/`. Its `blobs/` folder holds the original bytes, stored once per SHA-256 checksum. The numbered `batches/` manifests record original filenames, import order, and explicit session options. The dashboard archives a one-click winner capture as CSV before waiting for the ZIP, so you can finish an interrupted import later with just the ZIP.
+The dashboard and CLI keep the original imported ZIPs and CSVs in a sibling archive. The default is `research-data/poker.raw/`. Its `blobs/` folder holds the original bytes, stored once per SHA-256 checksum. The numbered `batches/` manifests record original filenames, import order, source account labels and explicit session options. The dashboard archives a one-click winner capture as CSV before waiting for the ZIP, so you can finish an interrupted import later with just the ZIP.
 
 Keep both archive folders together and back them up. To rebuild a new SQLite database from the archive, run:
 
@@ -77,7 +77,13 @@ Use `--session` when the input contains one independently confirmed anonymous-to
 
 An exact repeat imported with a confirmed session can upgrade a hand-local scope. The first stored hand is retained when the same ID arrives with different content or a different confirmed session, and the CLI reports the discrepancy. A batch is transactional. SQLite also keeps unknown players' seats, contributions and raw action lines available for later analysis.
 
-The matcher preserves export prefixes. It accepts equivalent decorated IDs such as `Hand ID #HD123`, links the PokerCraft `VH123` variant to `HD123`, and accepts a bare number only while it has a single matching export ID in the database. Use full IDs when available. Only a complete recorded payout with one distinct recipient can establish winner evidence. A token with multiple nicknames, or a nickname with multiple tokens in a confirmed scope, loses all affected mappings. The `mapping_evidence` and `identity_mappings` SQLite views expose the source rows and currently valid mappings. Here, verified means the supplied records agree under these matching rules and the operator's session assignment.
+Use `--account NAME` on CLI imports or when starting the dashboard to designate the source PokerCraft account. Use the same label for that account's CSVs and ZIPs. The default label is `local`, including records from older databases and raw archives. A duplicate hand ID from a different account keeps the previously stored hand and preserves the new ZIP in the raw archive.
+
+The matcher preserves export prefixes. It accepts equivalent decorated IDs such as `Hand ID #HD123`, links the PokerCraft `VH123` variant to `HD123`, and accepts a bare number only while it matches one export ID for that account. Only a complete recorded payout with one distinct recipient can establish winner evidence.
+
+Direct evidence for the appearance takes priority. For other appearances the resolver uses the closest dated evidence for the token within the source account and session, allowing both multiple tokens per nickname and nickname changes over time. Disagreeing direct evidence or equidistant evidence with different nicknames leaves the appearance unresolved. `mapping_evidence` exposes the original observations and their hand timestamps, and `appearance_identities` records the resolution method and evidence hand ID. `identity_mappings` lists pairs backed by agreeing direct evidence.
+
+Player statistics count a nickname once per hand. If several seats resolve to one nickname, the direct seat supplies the metrics when present. If all those seats are inferred, the hand counts once and its action and monetary metrics are omitted for that nickname.
 
 ## Read statistics
 

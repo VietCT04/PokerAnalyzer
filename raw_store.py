@@ -55,7 +55,7 @@ def store_input(root, path):
     return {"name": path.name, "extension": extension, "sha256": digest}
 
 
-def record_batch(root, files, session, member_sessions):
+def record_batch(root, files, session, member_sessions, source_account):
     """Call while holding the database write transaction to preserve import order."""
     folder = root / "batches"
     folder.mkdir(parents=True, exist_ok=True)
@@ -66,6 +66,7 @@ def record_batch(root, files, session, member_sessions):
         "files": [store_input(root, source) for source in files],
         "session": session,
         "member_sessions": member_sessions,
+        "source_account": source_account,
     }
     with NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder, delete=False) as stream:
         temporary = Path(stream.name)

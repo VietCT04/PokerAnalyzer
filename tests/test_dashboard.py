@@ -121,7 +121,7 @@ class DashboardTest(unittest.TestCase):
         evening = self.downloads / "evening.zip"
         evening.write_bytes(zip_bytes("table-evening.txt"))
         later_winners = self.downloads / "second.csv"
-        later_winners.write_text("hand_id,winner_nickname\nHD900000002,Conflicting Name\nHD900000003,Example Casey\n",
+        later_winners.write_text("hand_id,winner_nickname\nHD900000001,Conflicting Name\nHD900000003,Example Casey\n",
                                  encoding="utf-8")
         with closing(connect(original)) as db:
             import_batch(db, original, [evening, later_winners])

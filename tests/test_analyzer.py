@@ -65,17 +65,18 @@ class AnalyzerTest(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM appearances").fetchone()[0], 8)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM actions WHERE kind = 'return'").fetchone()[0], 3)
 
-    def test_conflicting_evidence_revokes_previously_propagated_identity(self):
+    def test_disagreeing_direct_evidence_leaves_identity_unresolved(self):
         import_zip(self.db, self.archive(), member_sessions=SESSIONS)
         import_csv(self.db, EXAMPLES / "winners.csv")
-        import_csv(self.db, self.csv("HD900000002,Example Other\n"))
+        import_csv(self.db, self.csv("HD900000001,Example Other\n"))
         self.assertEqual(self.stats("Example Alice"), [])
         self.assertEqual(self.stats("Example Other"), [])
         self.assertEqual(self.stats("Example Casey")[0]["total_observed_hands"], 1)
         with contextlib.redirect_stdout(io.StringIO()) as output:
             print_coverage(self.db)
         self.assertIn("Mapping conflict:", output.getvalue())
-        self.assertIn("HD900000002", output.getvalue())
+        self.assertIn("direct_conflict", output.getvalue())
+        self.assertIn("timestamp_tie", output.getvalue())
 
     def test_bare_id_ambiguity_revokes_numeric_evidence(self):
         import_csv(self.db, self.csv("Hand ID: #900000001,Example Alice\n#HD900000003,Example Casey\n"))
@@ -90,12 +91,69 @@ class AnalyzerTest(unittest.TestCase):
         import_csv(self.db, EXAMPLES / "winners.csv")
         self.assertEqual(self.stats("Example Alice")[0]["total_observed_hands"], 2)
 
-    def test_same_nickname_on_two_tokens_is_a_conflict(self):
+    def test_multiple_tokens_share_a_nickname_without_double_counting_hands(self):
         swapped = EVENING.replace("a0a0a0a0", "b0b0b0b0")
         import_zip(self.db, self.archive(**{"morning.txt": MORNING, "evening.txt": swapped}), session="same")
         import_csv(self.db, self.csv("900000001,Example Alice\n900000003,Example Alice\n"))
-        self.assertEqual(self.stats("Example Alice"), [])
+        player, = self.stats("Example Alice")
+        self.assertEqual((player["total_observed_hands"], player["direct_hands"], player["inferred_hands"]), (3, 2, 1))
+        self.assertEqual(player["net_hands"], 2)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM mapping_candidates").fetchone()[0], 2)
+
+    def test_one_token_changes_nickname_by_nearest_timestamp_and_ties_stay_unresolved(self):
+        template = MORNING.split("\n\n", 1)[0]
+        stamps = ("09:00:00.100", "09:00:00.900", "09:00:00.200", "09:00:00.800", "09:00:00.500")
+        records = "\n\n".join(template.replace("900000001", str(900000010 + index)).replace("09:00:00", time)
+                              for index, time in enumerate(stamps))
+        import_zip(self.db, self.archive(**{"timeline.txt": records}), session="timeline")
+        import_csv(self.db, self.csv("HD900000010,Example Alice\n"))
+        self.assertEqual(self.stats("Example Alice")[0]["total_observed_hands"], 5)
+        import_csv(self.db, self.csv("HD900000011,Example Bob\n"))
+        alice, = self.stats("Example Alice")
+        bob, = self.stats("Example Bob")
+        self.assertEqual((alice["direct_hands"], alice["inferred_hands"], bob["direct_hands"], bob["inferred_hands"]),
+                         (1, 1, 1, 1))
+        self.assertEqual([tuple(row) for row in self.db.execute("""
+            SELECT hand_id, nickname, method, evidence_hand_id
+            FROM appearance_identities WHERE token = 'a0a0a0a0' ORDER BY hand_id
+        """)], [
+            ("HD900000010", "Example Alice", "direct", "HD900000010"),
+            ("HD900000011", "Example Bob", "direct", "HD900000011"),
+            ("HD900000012", "Example Alice", "inferred", "HD900000010"),
+            ("HD900000013", "Example Bob", "inferred", "HD900000011"),
+            ("HD900000014", None, "timestamp_tie", None),
+        ])
+        self.assertEqual([row[0] for row in self.db.execute("""
+            SELECT evidence_timestamp FROM mapping_evidence ORDER BY hand_id
+        """)], ["2026/01/01 09:00:00.100", "2026/01/01 09:00:00.900"])
+
+    def test_direct_evidence_wins_when_other_names_have_the_same_timestamp(self):
+        template = MORNING.split("\n\n", 1)[0]
+        records = "\n\n".join(template.replace("900000001", str(900000020 + index)) for index in range(3))
+        import_zip(self.db, self.archive(**{"timeline.txt": records}), session="timeline")
+        import_csv(self.db, self.csv("HD900000020,Example Alice\nHD900000021,Example Bob\n"))
+        self.assertEqual(self.stats("Example Alice")[0]["direct_hands"], 1)
+        self.assertEqual(self.stats("Example Bob")[0]["direct_hands"], 1)
+        self.assertEqual(self.db.execute("""
+            SELECT method FROM appearance_identities WHERE hand_id = 'HD900000022' AND token = 'a0a0a0a0'
+        """).fetchone()[0], "timestamp_tie")
+
+    def test_evidence_stays_with_its_source_account_and_session(self):
+        first = self.archive("morning.zip", **{"morning.txt": MORNING})
+        second = self.archive("evening.zip", **{"evening.txt": EVENING})
+        import_zip(self.db, first, session="same", source_account="account-a")
+        import_zip(self.db, second, session="same", source_account="account-b")
+        import_csv(self.db, self.csv("HD900000001,Example Alice\nHD900000003,Wrong Account\n"),
+                   source_account="account-a")
+        self.assertEqual(self.stats("Example Alice")[0]["total_observed_hands"], 2)
+        self.assertEqual(self.stats("Wrong Account"), [])
+        self.assertIsNone(self.db.execute("SELECT 1 FROM appearance_identities WHERE hand_id = 'HD900000003'").fetchone())
+        import_csv(self.db, self.csv("HD900000003,Example Casey\n"), source_account="account-b")
+        self.assertEqual(self.stats("Example Casey")[0]["direct_hands"], 1)
+        self.assertEqual(import_zip(self.db, first, session="same", source_account="account-b")["account conflict"], 2)
+        third = EVENING.replace("HD900000003", "HD900000004")
+        import_zip(self.db, self.archive("next.zip", **{"next.txt": third}), session="next", source_account="account-a")
+        self.assertEqual(self.stats("Example Alice")[0]["total_observed_hands"], 2)
 
     def test_split_pot_and_unknown_action(self):
         source = MORNING.split("\n\n", 1)[0].strip()
@@ -200,7 +258,8 @@ Total pot 480 | Rake 0""".splitlines())
         path = self.folder / "legacy.sqlite"
         schema = (EXAMPLES.parent / "schema.sql").read_text(encoding="utf-8")
         with contextlib.closing(sqlite3.connect(path)) as legacy, legacy:
-            legacy.executescript(schema.replace(",\n    table_name TEXT NOT NULL DEFAULT ''", ""))
+            legacy.executescript(schema.replace(",\n    table_name TEXT NOT NULL DEFAULT ''", "", 1)
+                                 .replace(",\n    source_account TEXT NOT NULL DEFAULT 'local'", "", 1))
             legacy.execute("INSERT INTO sessions VALUES (1, 'hand:RC1', 'RushAndCash1', '')")
             legacy.execute("""
                 INSERT INTO hands VALUES ('RC1', '1', 1, 'x.zip/x.txt', '', '', '', 6, 1, '$', '1', NULL, 0, 0)
@@ -211,7 +270,8 @@ Total pot 480 | Rake 0""".splitlines())
     def test_rebuild_preserves_explicit_scope_and_skips_failed_batches(self):
         path = self.folder / "poker.sqlite"
         export = self.archive()
-        import_batch(self.db, path, [EXAMPLES / "winners.csv", export], member_sessions=SESSIONS)
+        import_batch(self.db, path, [EXAMPLES / "winners.csv", export], member_sessions=SESSIONS,
+                     source_account="research-account")
         failed = self.folder / "invalid.csv"
         failed.write_text("missing,fields\n", encoding="utf-8")
         with self.assertRaises(ValueError):
@@ -222,6 +282,7 @@ Total pot 480 | Rake 0""".splitlines())
         self.assertEqual(rebuild_database(recovered, archive), 1)
         with contextlib.closing(connect(recovered)) as db:
             self.assertEqual(statistics(db), statistics(self.db))
+            self.assertEqual(db.execute("SELECT DISTINCT source_account FROM hands").fetchone()[0], "research-account")
 
 
 if __name__ == "__main__":
