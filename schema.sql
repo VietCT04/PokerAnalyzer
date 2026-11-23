@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS hands (
     big_blind TEXT,
     winner_token TEXT,
     preflop_complete INTEGER NOT NULL,
-    ledger_complete INTEGER NOT NULL
+    ledger_complete INTEGER NOT NULL,
+    table_name TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS hands_numeric_id ON hands (numeric_id);
 CREATE INDEX IF NOT EXISTS hands_session ON hands (session_id);

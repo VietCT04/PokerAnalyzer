@@ -1,10 +1,14 @@
 """Read English GGPoker hand histories and derive auditable per-hand facts."""
 
+import hashlib
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
 from io import TextIOWrapper
+from itertools import groupby
+from operator import itemgetter
+from pathlib import PurePosixPath
 from zipfile import ZipFile
 
 
@@ -13,6 +17,11 @@ HAND_ID = r"[A-Z]*[0-9]+"
 HEADER = re.compile(rf"Poker Hand #({HAND_ID}):\s*(.*)", re.I)
 STAKES = re.compile(r"^(.*?)\s*\(([^()/]+)\s*/\s*([^()/]+)\)\s*-\s*(.+)$")
 TABLE = re.compile(r"Table '(.*)' (\d+)-max(?: Seat #(\d+) is the button)?")
+RUSH_TABLE = r"RushAndCash[0-9]+"
+RUSH_MEMBER = re.compile(
+    rf"GG[0-9]{{8}}-[0-9]{{4}} - ({RUSH_TABLE}) - ([0-9]+(?:\.[0-9]+)?) - "
+    r"([0-9]+(?:\.[0-9]+)?) - ([0-9]+)max\.txt"
+)
 SEAT = re.compile(r"Seat (\d+): (.+?) \(([^()]+) in chips\)(.*)")
 UNIT = r"[$€£]|C\$|T\$"
 NUMBER = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?"
@@ -287,3 +296,47 @@ def hands_in_zip(path):
                 yield info.filename, lines
             else:
                 yield info.filename, None
+
+
+def rush_hand_details(lines, member):
+    if not lines or len(lines) < 2:
+        return None
+    header = HEADER.fullmatch(lines[0])
+    if not header:
+        return None
+    table = TABLE.fullmatch(lines[1])
+    stakes = STAKES.fullmatch(header[2])
+    if (not header[1].upper().startswith("RC") or not table or not stakes or
+            not re.fullmatch(RUSH_TABLE, table[1]) or table[2] != member[4] or "Tournament #" in header[2]):
+        return None
+    try:
+        small_blind, small_unit = parse_amount(stakes[2])
+        big_blind, big_unit = parse_amount(stakes[3])
+    except ValueError:
+        return None
+    if small_unit != big_unit or small_blind != Decimal(member[2]) or big_blind != Decimal(member[3]):
+        return None
+    return table[1], (stakes[1], big_unit)
+
+
+def rush_export_scopes(path):
+    """Recognize native Rush & Cash members without merging independent exports."""
+    scopes = {}
+    for filename, group in groupby(hands_in_zip(path), key=itemgetter(0)):
+        member = RUSH_MEMBER.fullmatch(PurePosixPath(filename).name)
+        if not member:
+            continue
+        _, first = next(group)
+        anchor = rush_hand_details(first, member)
+        if not anchor or anchor[0] != member[1]:
+            continue
+        for _, lines in group:
+            details = rush_hand_details(lines, member)
+            if not details or details[1] != anchor[1]:
+                break
+        else:
+            # The anchor includes the export's anonymous tokens and Hero's seat, so
+            # matching labels alone never join two accounts or two independently named members.
+            digest = hashlib.sha256("\n".join([filename, *first]).encode()).hexdigest()
+            scopes[filename] = (f"rush:{digest}", member[1], "")
+    return scopes

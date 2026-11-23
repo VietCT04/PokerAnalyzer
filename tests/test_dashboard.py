@@ -4,12 +4,15 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
-from dashboard import make_server
+from dashboard import dashboard_data, make_server
+from poker_analyzer import connect, rebuild_database
+from raw_store import raw_dir
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -64,11 +67,19 @@ class DashboardTest(unittest.TestCase):
         data = self.data("/api/dashboard")
         self.assertEqual((data["hands"], data["identified"], data["appearances"]), (3, 2, 8))
         self.assertIn("Example Alice", self.request("/stats.csv").decode("utf-8-sig"))
+        original = self.server.job.db_path
+        archive = raw_dir(original)
+        self.assertEqual(len(list((archive / "blobs").iterdir())), 3)
+        recovered = original.with_name("recovered.sqlite")
+        self.assertEqual(rebuild_database(recovered, archive), 2)
+        with closing(connect(recovered)) as db:
+            self.assertEqual(dashboard_data(db), data)
 
     def test_watcher_uses_only_a_new_zip_with_a_shared_hand_id(self):
         (self.downloads / "old.zip").write_bytes(zip_bytes("table-morning.txt"))
         job = self.send("/api/watch", {"records": [["VH900000001", "Example Alice"]]})
         self.assertEqual(job["status"], "waiting")
+        self.assertEqual(len(list((raw_dir(self.server.job.db_path) / "blobs").glob("*.csv"))), 1)
         (self.downloads / "unrelated.zip").write_bytes(zip_bytes("table-evening.txt"))
         (self.downloads / "pending.crdownload").write_bytes(zip_bytes("table-morning.txt"))
         time.sleep(0.65)

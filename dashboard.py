@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 from zipfile import BadZipFile
 
 from hand_history import HEADER, hands_in_zip, normalize_id
-from poker_analyzer import STATS_COLUMNS, connect, coverage_summary, import_csv, import_zip, statistics
+from poker_analyzer import STATS_COLUMNS, connect, coverage_summary, import_batch, statistics
 
 
 PORT = 8766
@@ -49,13 +49,9 @@ def dashboard_data(db):
 
 def import_files(db_path, files):
     counts = Counter()
-    with closing(connect(db_path)) as db, db:
-        db.execute("BEGIN IMMEDIATE")
-        for path in files:
-            if path.suffix.lower() == ".csv":
-                counts["observations"] += import_csv(db, path)
-            else:
-                counts.update(import_zip(db, path))
+    with closing(connect(db_path)) as db:
+        for _, result in import_batch(db, db_path, files):
+            counts.update(result)
     return dict(counts)
 
 
@@ -112,9 +108,16 @@ class ImportJob:
             if self.state["status"] in ("waiting", "importing"):
                 raise ValueError("An export is already pending. Wait for it or stop waiting in the dashboard.")
             before = zip_signatures(self.downloads)
+            with TemporaryDirectory(dir=self.db_path.parent) as folder:
+                capture = Path(folder) / "pokercraft-capture.csv"
+                with capture.open("w", encoding="utf-8", newline="") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(("hand_id", "winner_nickname"))
+                    writer.writerows(records)
+                counts = import_files(self.db_path, [capture])
             job_id = self.state["id"] + 1
             self.state = {"id": job_id, "status": "waiting", "observations": len(records), "partial": partial}
-        threading.Thread(target=self.watch, args=(job_id, records, before), daemon=True).start()
+        threading.Thread(target=self.watch, args=(job_id, records, before, counts), daemon=True).start()
         return self.snapshot()
 
     def transition(self, job_id, previous, status, **details):
@@ -124,7 +127,7 @@ class ImportJob:
             self.state = {**self.state, "status": status, **details}
             return True
 
-    def watch(self, job_id, records, before):
+    def watch(self, job_id, records, before, capture_counts):
         expected = {"HD" + hand[2:] if hand.startswith("VH") else hand for hand, _ in records}
         checked = set()
         deadline = time.monotonic() + WATCH_SECONDS
@@ -147,13 +150,7 @@ class ImportJob:
                         continue
                     if not self.transition(job_id, "waiting", "importing", file=path.name):
                         return
-                    with TemporaryDirectory(dir=self.db_path.parent) as folder:
-                        capture = Path(folder) / "pokercraft-capture.csv"
-                        with capture.open("w", encoding="utf-8", newline="") as stream:
-                            writer = csv.writer(stream)
-                            writer.writerow(("hand_id", "winner_nickname"))
-                            writer.writerows(records)
-                        counts = import_files(self.db_path, [capture, path])
+                    counts = {**capture_counts, **import_files(self.db_path, [path])}
                     self.transition(job_id, "importing", "complete", counts=counts)
                     return
                 time.sleep(0.5)

@@ -34,6 +34,7 @@ function describeImport(counts) {
   if ("added" in counts) {
     results.push(countLabel(counts.added, "new hand"));
     if (counts.duplicate) results.push(countLabel(counts.duplicate, "duplicate hand"));
+    if (counts.scoped) results.push(countLabel(counts.scoped, "hand linked to a session"));
     const conflicts = (counts["content conflict"] || 0) + (counts["session conflict"] || 0);
     if (conflicts) results.push(countLabel(conflicts, "skipped conflicting hand"));
   }
@@ -113,11 +114,11 @@ async function pollJob() {
   try {
     const job = await request("/api/job");
     const messages = {
-      waiting: "Waiting for the matching PokerCraft ZIP in your downloads folder.",
+      waiting: "Winner capture saved. Waiting for the matching PokerCraft ZIP in your downloads folder.",
       importing: "Importing " + job.file + "…",
       complete: "Import complete. " + describeImport(job.counts || {}) +
         (job.partial ? ". Capture stopped before a later page rendered." : ""),
-      timeout: "No matching ZIP appeared. If it saved elsewhere, choose the ZIP and winner CSV above.",
+      timeout: "Winner capture saved. If the ZIP downloaded elsewhere, choose it above to finish the import.",
       stopped: "Stopped waiting for a ZIP.",
       error: job.message,
     };

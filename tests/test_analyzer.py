@@ -1,12 +1,16 @@
 import contextlib
 import io
+import sqlite3
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from hand_history import parse_hand
-from poker_analyzer import STATS_COLUMNS, connect, import_csv, import_zip, print_coverage, statistics
+from poker_analyzer import (STATS_COLUMNS, connect, import_batch, import_csv, import_zip, print_coverage,
+                            rebuild_database, statistics)
+from raw_store import raw_dir
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -155,6 +159,69 @@ Total pot 480 | Rake 0""".splitlines())
             counts = import_zip(self.db, self.archive("overlap.zip", **{"overlap.txt": overlap}), session="large")
         self.assertEqual((counts["added"], counts["duplicate"]), (1, 1))
         self.assertEqual(self.stats("Example Alice")[0]["total_observed_hands"], 10001)
+
+    def test_native_rush_exports_propagate_hero_across_tables_within_each_member(self):
+        def as_rush(text, table):
+            return text.replace("Poker Hand #HD", "Poker Hand #RC").replace("Synthetic 1", table)
+
+        def hero_wins(text):
+            return text.replace("Hero", "TemporaryAlias").replace("a0a0a0a0", "Hero").replace("TemporaryAlias", "a0a0a0a0")
+
+        win, loss = MORNING.split("\n\n", 1)
+        morning = as_rush(hero_wins(win), "RushAndCash9101") + "\n\n" + as_rush(loss, "RushAndCash9102")
+        evening = as_rush(hero_wins(EVENING), "RushAndCash9103")
+        members = {
+            "GG20260101-0900 - RushAndCash9101 - 0.50 - 1 - 6max.txt": morning,
+            "GG20260101-1900 - RushAndCash9103 - 0.50 - 1 - 6max.txt": evening,
+        }
+        archive = self.archive(**members)
+        import_csv(self.db, self.csv("RC900000001,Example Alice\nRC900000003,Example Casey\n"))
+        self.assertEqual(import_zip(self.db, archive, member_sessions={})["added"], 3)
+        self.assertEqual(self.stats("Example Alice")[0]["total_observed_hands"], 1)
+
+        self.assertEqual(import_zip(self.db, archive)["scoped"], 3)
+        alice, = self.stats("Example Alice")
+        self.assertEqual(alice["total_observed_hands"], 2)
+        self.assertEqual(Decimal(alice["net_winnings"]), Decimal(0))
+        self.assertEqual(self.stats("Example Casey")[0]["total_observed_hands"], 1)
+        self.assertEqual(self.db.execute("SELECT COUNT(DISTINCT session_id), COUNT(DISTINCT table_name) FROM hands")
+                         .fetchone()[:], (2, 3))
+        self.assertEqual(import_zip(self.db, self.archive("overlap.zip", **members))["duplicate"], 3)
+
+    def test_mislabeled_rush_member_stays_hand_local(self):
+        valid = MORNING.split("\n\n", 1)[0].replace("Poker Hand #HD", "Poker Hand #RC").replace(
+            "Synthetic 1", "RushAndCash9101")
+        member = "GG20260101-0900 - RushAndCash9101 - 0.50 - 1 - 6max.txt"
+        archive = self.archive(**{member: valid + "\n\n" + EVENING})
+        import_zip(self.db, archive)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM sessions WHERE scope LIKE 'hand:%'").fetchone()[0], 2)
+
+    def test_preexisting_database_retains_original_hand_table(self):
+        path = self.folder / "legacy.sqlite"
+        schema = (EXAMPLES.parent / "schema.sql").read_text(encoding="utf-8")
+        with contextlib.closing(sqlite3.connect(path)) as legacy, legacy:
+            legacy.executescript(schema.replace(",\n    table_name TEXT NOT NULL DEFAULT ''", ""))
+            legacy.execute("INSERT INTO sessions VALUES (1, 'hand:RC1', 'RushAndCash1', '')")
+            legacy.execute("""
+                INSERT INTO hands VALUES ('RC1', '1', 1, 'x.zip/x.txt', '', '', '', 6, 1, '$', '1', NULL, 0, 0)
+            """)
+        with contextlib.closing(connect(path)) as migrated:
+            self.assertEqual(migrated.execute("SELECT table_name FROM hands").fetchone()[0], "RushAndCash1")
+
+    def test_rebuild_preserves_explicit_scope_and_skips_failed_batches(self):
+        path = self.folder / "poker.sqlite"
+        export = self.archive()
+        import_batch(self.db, path, [EXAMPLES / "winners.csv", export], member_sessions=SESSIONS)
+        failed = self.folder / "invalid.csv"
+        failed.write_text("missing,fields\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            import_batch(self.db, path, [failed])
+        archive = raw_dir(path)
+        self.assertEqual(len(list((archive / "batches").glob("*.failed.json"))), 1)
+        recovered = self.folder / "recovered.sqlite"
+        self.assertEqual(rebuild_database(recovered, archive), 1)
+        with contextlib.closing(connect(recovered)) as db:
+            self.assertEqual(statistics(db), statistics(self.db))
 
 
 if __name__ == "__main__":

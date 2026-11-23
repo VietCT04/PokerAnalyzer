@@ -12,22 +12,40 @@ from decimal import Decimal
 from pathlib import Path
 from zipfile import BadZipFile
 
-from hand_history import ZERO, hands_in_zip, normalize_id, numeric_id, parse_hand
+from hand_history import ZERO, hands_in_zip, normalize_id, numeric_id, parse_hand, rush_export_scopes
+from raw_store import archived_batches, batch_inputs, raw_dir, record_batch
 
 
 def connect(path):
     db = sqlite3.connect(path, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
-    db.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
+    try:
+        db.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
+        if not has_hand_table_name(db):
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                if not has_hand_table_name(db):
+                    db.execute("ALTER TABLE hands ADD COLUMN table_name TEXT NOT NULL DEFAULT ''")
+                    db.execute("""
+                        UPDATE hands SET table_name = (SELECT table_name FROM sessions WHERE id = hands.session_id)
+                    """)
+    except (OSError, sqlite3.Error):
+        db.close()
+        raise
     return db
 
 
-def import_csv(db, path):
+def has_hand_table_name(db):
+    return any(column["name"] == "table_name" for column in db.execute("PRAGMA table_info(hands)"))
+
+
+def import_csv(db, path, source_name=None):
+    source = source_name or path.name
     with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         if not reader.fieldnames or not {"hand_id", "winner_nickname"} <= set(reader.fieldnames):
-            raise ValueError(f"{path}: expected hand_id and winner_nickname CSV columns")
+            raise ValueError(f"{source}: expected hand_id and winner_nickname CSV columns")
         added = 0
         for row in reader:
             try:
@@ -39,19 +57,18 @@ def import_csv(db, path):
                     raise ValueError("missing or malformed winner nickname")
                 db.execute("INSERT OR IGNORE INTO players VALUES (?)", (nickname,))
                 added += db.execute("INSERT OR IGNORE INTO winner_observations VALUES (?, ?, ?)",
-                                    (hand_id, nickname, path.name)).rowcount
+                                    (hand_id, nickname, source)).rowcount
             except ValueError as exc:
-                raise ValueError(f"{path}:{reader.line_num}: {exc}") from exc
+                raise ValueError(f"{source}:{reader.line_num}: {exc}") from exc
         return added
 
 
-def session_id(db, hand, session):
-    key = (f"session:{session}" if session and hand.table else f"hand:{hand.id}", hand.table, hand.tournament)
+def session_id(db, key):
     db.execute("INSERT OR IGNORE INTO sessions (scope, table_name, tournament) VALUES (?, ?, ?)", key)
     return db.execute("SELECT id FROM sessions WHERE (scope, table_name, tournament) = (?, ?, ?)", key).fetchone()[0]
 
 
-def store_hand(db, hand, session, fingerprint, source):
+def store_hand(db, hand, key, fingerprint, source):
     previous = db.execute("""
         SELECT h.fingerprint, h.session_id, s.scope
         FROM hands h JOIN sessions s ON s.id = h.session_id WHERE h.id = ?
@@ -59,21 +76,26 @@ def store_hand(db, hand, session, fingerprint, source):
     if previous:
         if previous["fingerprint"] != fingerprint:
             return "content conflict"
-        if session and hand.table:
+        if not key[0].startswith("hand:"):
             if previous["scope"].startswith("hand:"):
-                new_session = session_id(db, hand, session)
+                new_session = session_id(db, key)
                 db.execute("UPDATE hands SET session_id = ? WHERE id = ?", (new_session, hand.id))
                 db.execute("DELETE FROM sessions WHERE id = ?", (previous["session_id"],))
                 return "scoped"
-            if previous["scope"] != f"session:{session}":
+            if previous["scope"] != key[0]:
                 return "session conflict"
         return "duplicate"
 
-    db.execute("INSERT INTO hands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (
-        hand.id, numeric_id(hand.id), session_id(db, hand, session), source, fingerprint, hand.header,
+    db.execute("""
+        INSERT INTO hands (
+            id, numeric_id, session_id, source, fingerprint, header, played_at, max_seats, button,
+            unit, big_blind, winner_token, preflop_complete, ledger_complete, table_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        hand.id, numeric_id(hand.id), session_id(db, key), source, fingerprint, hand.header,
         hand.played_at, hand.max_seats, hand.button, hand.unit,
         str(hand.big_blind) if hand.big_blind is not None else None, hand.winner,
-        hand.preflop_complete, hand.ledger_complete,
+        hand.preflop_complete, hand.ledger_complete, hand.table,
     ))
     db.executemany("INSERT INTO appearances VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (
         (hand.id, token, seat.number, str(seat.stack), seat.sitting_out, str(seat.paid), str(seat.collected),
@@ -90,27 +112,72 @@ def store_hand(db, hand, session, fingerprint, source):
     return "added"
 
 
-def import_zip(db, path, session=None, member_sessions=None):
+def import_zip(db, path, session=None, member_sessions=None, source_name=None):
+    source = source_name or path.name
     counts = dict.fromkeys(("added", "duplicate", "scoped", "content conflict", "session conflict", "other TXT"), 0)
     members = set()
+    rush_scopes = rush_export_scopes(path) if session is None and member_sessions is None else {}
     for member, lines in hands_in_zip(path):
         if lines is None:
             counts["other TXT"] += 1
-            print(f"{path}/{member}: skipped TXT with no Poker Hand headers", file=sys.stderr)
+            print(f"{source}/{member}: skipped TXT with no Poker Hand headers", file=sys.stderr)
             continue
         members.add(member)
         hand = parse_hand(lines)
         fingerprint = hashlib.sha256("\n".join([hand.id, hand.header, *lines[1:]]).encode()).hexdigest()
         scope = (member_sessions or {}).get(member, session)
-        status = store_hand(db, hand, scope, fingerprint, f"{path.name}/{member}")
+        key = rush_scopes.get(member) or (
+            f"session:{scope}" if scope and hand.table else f"hand:{hand.id}", hand.table, hand.tournament,
+        )
+        status = store_hand(db, hand, key, fingerprint, f"{source}/{member}")
         counts[status] += 1
         if status.endswith("conflict") and counts[status] <= 5:
-            print(f"{path}/{member}: {hand.id}: {status}; kept the existing hand and session", file=sys.stderr)
+            print(f"{source}/{member}: {hand.id}: {status}; kept the existing hand and session", file=sys.stderr)
     if not members:
-        raise ValueError(f"{path}: no supported hand histories")
+        raise ValueError(f"{source}: no supported hand histories")
     if missing := (member_sessions or {}).keys() - members:
-        raise ValueError(f"{path}: session map entries with no parsed hands: {', '.join(sorted(missing))}")
+        raise ValueError(f"{source}: session map entries with no parsed hands: {', '.join(sorted(missing))}")
     return counts
+
+
+def apply_raw_batch(db, root, batch, verify=False):
+    results = []
+    for path, name in batch_inputs(root, batch, verify):
+        if path.suffix == ".csv":
+            counts = {"observations": import_csv(db, path, source_name=name)}
+        else:
+            counts = import_zip(db, path, batch["session"], batch["member_sessions"], source_name=name)
+        results.append((name, counts))
+    return results
+
+
+def import_batch(db, db_path, files, session=None, member_sessions=None):
+    root = raw_dir(db_path)
+    with db:
+        db.execute("BEGIN IMMEDIATE")
+        manifest, batch = record_batch(root, files, session, member_sessions)
+        try:
+            return apply_raw_batch(db, root, batch)
+        except Exception:
+            manifest.rename(manifest.with_suffix(".failed.json"))
+            raise
+
+
+def rebuild_database(path, *roots):
+    batches = []
+    for root in roots:
+        manifests = archived_batches(root)
+        if not manifests:
+            raise ValueError(f"{root}: no archived import batches")
+        batches.extend((root, manifest) for manifest in manifests)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=False)
+    with closing(connect(path)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        for root, manifest in batches:
+            batch = json.loads(manifest.read_text(encoding="utf-8"))
+            apply_raw_batch(db, root, batch, verify=True)
+    return len(batches)
 
 
 def coverage_summary(db):
@@ -253,9 +320,18 @@ def main(argv=None):
     stats.add_argument("nickname")
     export = commands.add_parser("export", help="write verified statistics to a new CSV file")
     export.add_argument("output", type=Path)
+    rebuild = commands.add_parser("rebuild", help="restore a new SQLite database from archived raw inputs")
+    rebuild.add_argument("--raw", type=Path, action="append",
+                         help="raw archive directory, repeat oldest first (default: database .raw directory)")
 
     args = parser.parse_args(argv)
     try:
+        if args.command == "rebuild":
+            count = rebuild_database(args.db, *(args.raw or [raw_dir(args.db)]))
+            print(f"Rebuilt {args.db} from {count} archived import batches")
+            with closing(connect(args.db)) as db:
+                print_coverage(db)
+            return 0
         with closing(connect(args.db)) as db:
             if args.command == "import":
                 if not (args.csv or args.zip):
@@ -275,13 +351,11 @@ def main(argv=None):
                 if args.session is not None and (not args.zip or not session):
                     parser.error("--session requires a non-empty label and at least one --zip")
                 messages = []
-                with db:
-                    db.execute("BEGIN IMMEDIATE")
-                    for path in args.csv:
-                        messages.append(f"{path}: {import_csv(db, path)} new winner observations")
-                    for path in args.zip:
-                        counts = import_zip(db, path, session, member_sessions)
-                        messages.append(f"{path}: " + ", ".join(f"{n} {key}" for key, n in counts.items()))
+                for name, counts in import_batch(db, args.db, [*args.csv, *args.zip], session, member_sessions):
+                    if "observations" in counts:
+                        messages.append(f"{name}: {counts['observations']} new winner observations")
+                    else:
+                        messages.append(f"{name}: " + ", ".join(f"{n} {key}" for key, n in counts.items()))
                 print("\n".join(messages))
                 print_coverage(db)
             elif args.command == "coverage":
@@ -299,7 +373,7 @@ def main(argv=None):
                     writer.writerow(STATS_COLUMNS)
                     writer.writerows(statistics(db))
                 print(f"Exported {args.output}")
-    except (OSError, ValueError, BadZipFile, sqlite3.Error, csv.Error) as exc:
+    except (OSError, ValueError, BadZipFile, sqlite3.Error, csv.Error, KeyError, TypeError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 0
