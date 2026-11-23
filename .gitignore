@@ -9,3 +9,4 @@ __pycache__/
 *.csv
 !examples/winners.csv
 research-data/
+/html.txt

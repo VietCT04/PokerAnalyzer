@@ -24,14 +24,13 @@ The example imports three hands and identifies three of eight appearances. Alice
 ## Capture Game History in Chrome
 
 1. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select the checkout's `extension` folder.
-2. Open the PokerCraft **Game History** results in a Chrome tab. Copy the origin from the address bar, including `https://` and the hostname.
-3. In Chrome DevTools **Elements**, inspect the rendered results. Find a CSS selector for one repeating hand row, and two selectors relative to that row that each match one rendered element. One element must contain the complete hand ID and the other must contain exactly one winner nickname. Inspect several rows, including any multi-winner or empty row, so that the winner selector selects individual nicknames and the extension can skip rows with several matches. The logged-in DOM could not be verified, so the extension ships with blank selectors.
-4. Open **PokerCraft Winner Capture** from Chrome's Extensions menu. Enter the origin and the three selectors. Click **Capture rendered rows**, then verify that the usable row count and a sample of exported pairs agree with the page.
-5. Move to the next result page, batch, or scroll window and repeat capture after the rows render. The popup shows the total number of unique IDs across captures. **Export CSV** downloads all observations, keeping a row for each distinct hand ID and nickname pair so that the CLI can detect conflicting observations.
+2. Open English **Rush & Cash** on `my.pokercraft.com` and select the sessions you want to inspect. Click **Game History** in PokerCraft or **Open Game History** in the extension.
+3. Once hands are visible, open the extension and click **Capture & download CSV**. Keep the popup open while it follows the native Next button from the current page. Start on page 1 to capture from the beginning. If a page fails to render, the popup reports the stop and saves the observations already collected.
+4. **Download hand histories** triggers PokerCraft’s own enabled Download control for its original export. Use the CSV and ZIP as separate inputs to the Python CLI.
 
-Capture runs on demand in the active tab's top-level document. For an embedded results view, inspect which frame owns the rows. Open the Game History document itself in a tab if PokerCraft exposes it as a standalone page. Virtualized lists require capture for each rendered window.
+The popup shows the number of unique hand IDs saved across captures. Each CSV contains the accumulated observations, preserving distinct nicknames for the same hand so the CLI can flag conflicts. **Download saved CSV** exports the same data without reading the page again.
 
-To try the extension on the synthetic fixture, run `python -m http.server 8765 --bind 127.0.0.1 --directory examples`, then open `http://127.0.0.1:8765/game-history.html`. Use origin `http://127.0.0.1:8765`, row selector `tbody > tr`, hand ID selector `.hand-id`, and winner selector `.winner`. The expected count is **2 unique hands**. Capturing twice should leave it at two.
+To try the synthetic fixture, run `python -m http.server 8765 --bind 127.0.0.1 --directory examples`, open `http://127.0.0.1:8765/game-history.html`, and click **Capture & download CSV**. A fresh extension should save **2 unique hands**. Capturing twice should leave that count at two.
 
 ## Import and scope real research data
 
