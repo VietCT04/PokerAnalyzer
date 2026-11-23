@@ -1,0 +1,40 @@
+Poker Hand #HD900000001: Hold'em No Limit ($0.50/$1) - 2026/01/01 09:00:00
+Table 'Synthetic 1' 6-max Seat #1 is the button
+Seat 1: a0a0a0a0 ($100 in chips)
+Seat 2: b0b0b0b0 ($100 in chips)
+Seat 3: Hero ($100 in chips)
+b0b0b0b0: posts small blind $0.50
+Hero: posts big blind $1
+*** HOLE CARDS ***
+Dealt to Hero [Ad 9d]
+a0a0a0a0: raises $2 to $3
+b0b0b0b0: folds
+Hero: calls $2
+*** FLOP *** [2h 5s 9c]
+Hero: checks
+a0a0a0a0: bets $4
+Hero: folds
+Uncalled bet ($4) returned to a0a0a0a0
+*** SHOWDOWN ***
+a0a0a0a0 collected $6 from pot
+*** SUMMARY ***
+Total pot $6.50 | Rake $0.50 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+
+Poker Hand #HD900000002: Hold'em No Limit ($0.50/$1) - 2026/01/01 09:02:00
+Table 'Synthetic 1' 6-max Seat #3 is the button
+Seat 1: a0a0a0a0 ($103 in chips)
+Seat 2: b0b0b0b0 ($99.50 in chips)
+Seat 3: Hero ($97 in chips)
+a0a0a0a0: posts small blind $0.50
+b0b0b0b0: posts big blind $1
+*** HOLE CARDS ***
+Dealt to Hero [Qs Jd]
+Hero: raises $2 to $3
+a0a0a0a0: raises $6 to $9
+b0b0b0b0: folds
+Hero: folds
+Uncalled bet ($6) returned to a0a0a0a0
+*** SHOWDOWN ***
+a0a0a0a0 collected $7 from pot
+*** SUMMARY ***
+Total pot $7 | Rake $0

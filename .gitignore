@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.uv-cache/
+.python/
+*.db*
+*.sqlite*
+*.zip
+*.csv
+!examples/winners.csv
+research-data/

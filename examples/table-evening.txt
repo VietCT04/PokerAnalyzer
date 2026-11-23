@@ -1,0 +1,15 @@
+Poker Hand #HD900000003: Hold'em No Limit ($0.50/$1) - 2026/01/01 19:00:00
+Table 'Synthetic 1' 6-max Seat #1 is the button
+Seat 1: a0a0a0a0 ($100 in chips)
+Seat 2: Hero ($100 in chips)
+a0a0a0a0: posts small blind $0.50
+Hero: posts big blind $1
+*** HOLE CARDS ***
+Dealt to Hero [7d 2d]
+a0a0a0a0: raises $2 to $3
+Hero: folds
+Uncalled bet ($2) returned to a0a0a0a0
+*** SHOWDOWN ***
+a0a0a0a0 collected $2 from pot
+*** SUMMARY ***
+Total pot $2 | Rake $0

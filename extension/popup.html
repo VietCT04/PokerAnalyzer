@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PokerCraft Winner Capture</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; min-width: 340px; margin: 16px; }
+    h1 { font-size: 17px; margin: 0 0 12px; }
+    label { display: block; margin: 8px 0; }
+    input { display: block; width: 100%; box-sizing: border-box; padding: 5px; }
+    button { margin: 3px 5px 3px 0; padding: 5px 9px; }
+    #status { min-height: 2em; }
+  </style>
+</head>
+<body>
+  <h1>PokerCraft Winner Capture</h1>
+  <form id="capture">
+    <label>Game History origin <input id="origin" type="url" required></label>
+    <label>Hand row selector <input id="row" required></label>
+    <label>Hand ID selector within row <input id="hand" required></label>
+    <label>Winner nickname selector within row <input id="winner" required></label>
+    <p id="count" aria-live="polite"></p>
+    <button type="submit" disabled>Capture rendered rows</button>
+    <button id="export" type="button" disabled>Export CSV</button>
+  </form>
+  <p id="status" role="status"></p>
+  <script src="capture.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
