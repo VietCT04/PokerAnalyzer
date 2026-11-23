@@ -16,7 +16,7 @@ The dashboard opens at `http://127.0.0.1:8766/`. It uses `research-data/poker.sq
 
 - **Existing downloads**. Choose the winner CSV and any number of hand-history ZIPs in the same file picker, then click **Import files**. You can also import the CSV and ZIP files in separate visits.
 - **New PokerCraft batch**. Reload the unpacked extension, select the sessions in Rush & Cash, open Game History, and start on page 1. Click **Download & import** once and keep the popup open while it captures pages. The extension triggers PokerCraft’s original ZIP download and opens the dashboard. The local importer waits up to three minutes for a newly saved ZIP that contains a hand ID from this capture. If Chrome prompts for a save location, choose the watched folder. One click handles one native ZIP export.
-- **Statistics**. Filter by nickname, sort columns, and export the CSV. Identity coverage counts appearances. The table displays per-unit stats and the number of opportunities behind each rate.
+- **Statistics**. Click **Sync & analyze** after importing to refresh from SQLite and see new hands, added and removed mappings, and identification via each session. The first run covers all saved hands. Later runs compare against the last analysis, even after restarting the dashboard. Filter by nickname, sort columns, and export the CSV.
 
 For recognized native Rush & Cash exports, each TXT member defines its own session. A verified winner mapping also identifies that token in other hands in the same member, including hands the player lost, even when the table changes. Reimport the original ZIP to apply this to hands already stored with a hand-local scope. Other formats use direct winner evidence until you supply a session with the CLI.
 

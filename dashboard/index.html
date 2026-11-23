@@ -17,7 +17,10 @@
   <main class="shell">
     <div class="page-heading">
       <div><h1>Hand history</h1><p>Import PokerCraft exports and review verified player statistics.</p></div>
-      <a class="button secondary" href="/stats.csv" download>Export stats CSV</a>
+      <div class="page-actions">
+        <a class="button secondary" href="/stats.csv" download>Export stats CSV</a>
+        <button class="button primary" type="button" id="analyze">Sync &amp; analyze</button>
+      </div>
     </div>
     <section class="metrics" aria-label="Database coverage">
       <article class="metric"><h2>Hands imported</h2><strong id="hands">—</strong><p id="net">Reconciled net</p></article>
@@ -43,6 +46,17 @@
         <button type="button" class="text-button" id="stop" hidden>Stop waiting</button>
       </div>
       <p id="import-status" class="notice" role="status" hidden></p>
+    </section>
+    <p id="analysis-status" class="notice analysis-status" role="status" hidden></p>
+    <section class="panel analysis-panel" id="analysis-panel" aria-labelledby="analysis-title" hidden>
+      <div class="analysis-heading"><h2 id="analysis-title">Latest analysis</h2><p id="analysis-time"></p></div>
+      <dl class="analysis-metrics">
+        <div><dt>New hands</dt><dd id="analysis-hands"></dd></div>
+        <div><dt>Mappings added</dt><dd id="analysis-added"></dd></div>
+        <div><dt>Mappings removed</dt><dd id="analysis-removed"></dd></div>
+        <div><dt>Identified via session</dt><dd id="analysis-propagated"></dd></div>
+      </dl>
+      <p id="analysis-evidence"></p>
     </section>
     <section class="panel player-panel" aria-labelledby="players-title">
       <div class="player-heading">

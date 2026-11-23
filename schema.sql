@@ -2,6 +2,12 @@ CREATE TABLE IF NOT EXISTS players (
     nickname TEXT PRIMARY KEY
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS dashboard_analysis (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    summary TEXT NOT NULL,
+    mapping_keys TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY,
     scope TEXT NOT NULL,

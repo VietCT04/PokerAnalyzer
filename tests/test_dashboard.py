@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
 from dashboard import dashboard_data, make_server
-from poker_analyzer import connect, rebuild_database
+from poker_analyzer import connect, import_batch, rebuild_database
 from raw_store import raw_dir
 
 
@@ -100,6 +100,37 @@ class DashboardTest(unittest.TestCase):
             self.request("/api/watch", b"{}", **{"X-PokerAnalyzer": "1", "Origin": "https://example.com"})
         self.addCleanup(rejected.exception.close)
         self.assertEqual(rejected.exception.code, 403)
+
+    def test_analysis_tracks_new_hands_and_changed_mappings(self):
+        original = self.server.job.db_path
+        morning = self.downloads / "morning.zip"
+        morning.write_bytes(zip_bytes("table-morning.txt"))
+        winners = self.downloads / "first.csv"
+        winners.write_text("hand_id,winner_nickname\nHD900000001,Example Alice\n", encoding="utf-8")
+        with closing(connect(original)) as db:
+            import_batch(db, original, [morning, winners], session="morning")
+
+        first = self.send("/api/analyze", {})["analysis"]
+        self.assertTrue(first["initial"])
+        self.assertEqual((first["new_hands"], first["new_mappings"], first["direct"], first["propagated"]),
+                         (2, 1, 1, 1))
+        self.assertEqual(self.data("/api/dashboard")["analysis"], first)
+        repeated = self.send("/api/analyze", {})["analysis"]
+        self.assertEqual((repeated["new_hands"], repeated["new_mappings"], repeated["removed_mappings"]), (0, 0, 0))
+
+        evening = self.downloads / "evening.zip"
+        evening.write_bytes(zip_bytes("table-evening.txt"))
+        later_winners = self.downloads / "second.csv"
+        later_winners.write_text("hand_id,winner_nickname\nHD900000002,Conflicting Name\nHD900000003,Example Casey\n",
+                                 encoding="utf-8")
+        with closing(connect(original)) as db:
+            import_batch(db, original, [evening, later_winners])
+
+        result = self.send("/api/analyze", {})
+        summary = result["analysis"]
+        self.assertEqual(result["mappings"], 1)
+        self.assertEqual((summary["new_hands"], summary["new_mappings"], summary["removed_mappings"]), (1, 1, 1))
+        self.assertEqual((summary["direct"], summary["propagated"], summary["conflicts"]), (1, 0, 2))
 
 
 if __name__ == "__main__":

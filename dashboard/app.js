@@ -6,11 +6,13 @@ const percent = new Intl.NumberFormat(undefined, {maximumFractionDigits: 1});
 const headers = [...document.querySelectorAll("th[data-key]")];
 const search = byId("search");
 const files = byId("files");
+const analyze = byId("analyze");
 let players = [];
 let sortKey = "observed_hands_in_unit";
 let ascending = false;
 let limit = 30;
 let lastJob = "";
+let dashboardRequest = 0;
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -89,8 +91,7 @@ function renderPlayers() {
   byId("more").hidden = matching.length <= limit;
 }
 
-async function loadDashboard() {
-  const data = await request("/api/dashboard");
+function renderDashboard(data) {
   const coverage = data.appearances ? data.identified * 100 / data.appearances : 0;
   byId("hands").textContent = number.format(data.hands);
   byId("net").textContent = countLabel(data.ledgers, "reconciled hand");
@@ -101,6 +102,28 @@ async function loadDashboard() {
   byId("conflicts").textContent = number.format(data.conflicts);
   players = data.players;
   renderPlayers();
+  if (data.analysis) renderAnalysis(data.analysis);
+}
+
+async function loadDashboard() {
+  const loading = ++dashboardRequest;
+  const data = await request("/api/dashboard");
+  if (loading === dashboardRequest) renderDashboard(data);
+}
+
+function renderAnalysis(summary) {
+  byId("analysis-panel").hidden = false;
+  const time = new Date(summary.completed_at).toLocaleString();
+  byId("analysis-time").textContent = (summary.initial ? "First analysis · " : "Since previous analysis · ") + time;
+  byId("analysis-hands").textContent = number.format(summary.new_hands);
+  byId("analysis-added").textContent = number.format(summary.new_mappings);
+  byId("analysis-removed").textContent = number.format(summary.removed_mappings);
+  byId("analysis-propagated").textContent = number.format(summary.propagated);
+  byId("analysis-evidence").textContent = [
+    number.format(summary.direct) + " directly identified from winner evidence",
+    countLabel(summary.conflicts, "conflicting match"),
+    countLabel(summary.unlinked, "unlinked winner record"),
+  ].join(" · ");
 }
 
 function showImport(message, error = false) {
@@ -145,6 +168,26 @@ async function pollJob() {
 files.addEventListener("change", () => {
   byId("import").disabled = !files.files.length;
   byId("file-summary").textContent = files.files.length ? countLabel(files.files.length, "file") + " selected" : "ZIP and CSV files";
+});
+
+analyze.addEventListener("click", async () => {
+  const status = byId("analysis-status");
+  const analyzing = ++dashboardRequest;
+  analyze.disabled = true;
+  status.hidden = false;
+  status.dataset.error = false;
+  status.textContent = "Analyzing saved hands and winner mappings…";
+  try {
+    const data = await post("/api/analyze", {}, true);
+    if (analyzing === dashboardRequest) renderDashboard(data);
+    else await loadDashboard();
+    status.hidden = true;
+  } catch (error) {
+    status.dataset.error = true;
+    status.textContent = error.message;
+  } finally {
+    analyze.disabled = false;
+  }
 });
 
 byId("import-form").addEventListener("submit", async (event) => {

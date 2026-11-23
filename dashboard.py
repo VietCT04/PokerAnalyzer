@@ -11,6 +11,7 @@ import time
 import webbrowser
 from collections import Counter
 from contextlib import closing
+from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
 from http import HTTPStatus
@@ -45,6 +46,45 @@ def dashboard_data(db):
     """).fetchone()[0]
     return {**coverage_summary(db), "conflicts": conflicts,
             "players": [dict(zip(STATS_COLUMNS, row)) for row in statistics(db)]}
+
+
+def analyze_dashboard(db):
+    with db:
+        db.execute("BEGIN IMMEDIATE")
+        data = dashboard_data(db)
+        previous = db.execute("SELECT summary, mapping_keys FROM dashboard_analysis WHERE id = 1").fetchone()
+        previous_hands = json.loads(previous["summary"])["hands"] if previous else 0
+        previous_keys = {tuple(key) for key in json.loads(previous["mapping_keys"])} if previous else set()
+        mapping_keys = {tuple(row) for row in db.execute("""
+            SELECT s.scope, s.table_name, s.tournament, m.token, m.nickname
+            FROM identity_mappings m JOIN sessions s ON s.id = m.session_id
+        """)}
+        direct = db.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT DISTINCT e.hand_id, e.token
+                FROM mapping_evidence e JOIN identity_mappings m
+                  ON (m.session_id, m.token, m.nickname) = (e.session_id, e.token, e.nickname)
+                JOIN appearances a ON (a.hand_id, a.token) = (e.hand_id, e.token)
+                WHERE NOT a.sitting_out
+            )
+        """).fetchone()[0]
+        summary = {
+            "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "initial": previous is None,
+            "hands": data["hands"],
+            "new_hands": max(0, data["hands"] - previous_hands),
+            "new_mappings": len(mapping_keys - previous_keys),
+            "removed_mappings": len(previous_keys - mapping_keys),
+            "direct": direct,
+            "propagated": data["identified"] - direct,
+            "conflicts": data["conflicts"],
+            "unlinked": data["unlinked"],
+        }
+        db.execute("""
+            INSERT INTO dashboard_analysis VALUES (1, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET summary = excluded.summary, mapping_keys = excluded.mapping_keys
+        """, (json.dumps(summary), json.dumps(sorted(mapping_keys), ensure_ascii=False)))
+    return {**data, "analysis": summary}
 
 
 def import_files(db_path, files):
@@ -226,7 +266,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 with closing(connect(self.server.job.db_path)) as db:
                     db.execute("BEGIN")
                     if route == "/api/dashboard":
-                        self.send_json(dashboard_data(db))
+                        data = dashboard_data(db)
+                        previous = db.execute("SELECT summary FROM dashboard_analysis WHERE id = 1").fetchone()
+                        if previous:
+                            data["analysis"] = json.loads(previous["summary"])
+                        self.send_json(data)
                     else:
                         stream = io.StringIO(newline="")
                         writer = csv.writer(stream)
@@ -264,6 +308,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 with TemporaryDirectory(dir=job.db_path.parent) as folder:
                     files = uploaded_files(body, self.headers.get("Content-Type", ""), Path(folder))
                     self.send_json({"counts": import_files(job.db_path, files)})
+            elif route == "/api/analyze":
+                with closing(connect(job.db_path)) as db:
+                    self.send_json(analyze_dashboard(db))
             else:
                 self.send_json({"error": "Page not found."}, HTTPStatus.NOT_FOUND)
         except (*IMPORT_ERRORS, KeyError, TypeError) as exc:
