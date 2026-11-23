@@ -113,7 +113,7 @@ def import_zip(db, path, session=None, member_sessions=None):
     return counts
 
 
-def print_coverage(db):
+def coverage_summary(db):
     counts = db.execute("""
         SELECT COUNT(*) AS hands, COUNT(winner_token) AS unique_winner,
                COALESCE(SUM(preflop_complete), 0) AS preflop, COALESCE(SUM(ledger_complete), 0) AS ledgers
@@ -132,11 +132,18 @@ def print_coverage(db):
         WHERE NOT EXISTS (SELECT 1 FROM matched_observations m
                           WHERE (m.observed_id, m.nickname, m.source) = (o.hand_id, o.nickname, o.source))
     """).fetchone()[0]
+    return {**dict(counts), "appearances": total, "identified": covered, "mappings": mapped,
+            "direct_hands": direct_hands, "unlinked": unlinked}
+
+
+def print_coverage(db):
+    counts = coverage_summary(db)
+    total, covered = counts["appearances"], counts["identified"]
     print(f"Hands: {counts['hands']} | unique recorded winner: {counts['unique_winner']} | "
           f"usable preflop: {counts['preflop']} | reconciled net: {counts['ledgers']}")
     print(f"Identified appearances: {covered}/{total} ({100 * covered / total if total else 0:.2f}%) | "
-          f"verified scoped mappings: {mapped} | evidence hands (including conflicts): {direct_hands} | "
-          f"unlinked CSV rows: {unlinked}")
+          f"verified scoped mappings: {counts['mappings']} | "
+          f"evidence hands (including conflicts): {counts['direct_hands']} | unlinked CSV rows: {counts['unlinked']}")
 
     conflicts = db.execute("""
         SELECT s.scope, s.table_name, s.tournament, e.token, e.nickname, e.hand_id, e.source

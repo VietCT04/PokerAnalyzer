@@ -1,8 +1,24 @@
 # PokerAnalyzer
 
-PokerAnalyzer links PokerCraft winner observations to English GGPoker hand-history exports for offline research. The Chrome extension captures rendered Game History rows. The Python CLI imports CSVs and ZIPs into SQLite, reports identity evidence and conflicts, and exports per-player statistics.
+PokerAnalyzer links PokerCraft winner observations to English GGPoker hand-history exports for offline research. The Chrome extension captures rendered Game History rows. The local dashboard and Python CLI import CSVs and ZIPs into SQLite and report identity coverage and player statistics.
 
 Use synthetic data for the walkthrough below. GGPoker's Security and Ecology Policy restricts third-party import, conversion, and systematic collection. Confirm that your authorization covers the intended PokerCraft access and research use before collecting real data. Keep real exports, captures and databases in a local directory outside this public repository. [GGPoker Security and Ecology Policy, sections 7 and 19](https://legal.ggpoker.com/network/security-ecology-policy/)
+
+## Local dashboard
+
+Install Python 3.10 or later. From the repository, start the dashboard and leave this terminal running.
+
+```sh
+python dashboard.py --open
+```
+
+The dashboard opens at `http://127.0.0.1:8766/`. It uses `research-data/poker.sqlite` by default. Use `--db PATH` to point it at an existing CLI database, and `--downloads PATH` if Chrome saves PokerCraft ZIPs outside your Downloads folder.
+
+- **Existing downloads**. Choose the winner CSV and any number of hand-history ZIPs in the same file picker, then click **Import files**. You can also import the CSV and ZIP files in separate visits.
+- **New PokerCraft batch**. Reload the unpacked extension, select the sessions in Rush & Cash, open Game History, and start on page 1. Click **Download & import** once and keep the popup open while it captures pages. The extension triggers PokerCraft’s original ZIP download and opens the dashboard. The local importer waits up to three minutes for a newly saved ZIP that contains a hand ID from this capture. If Chrome prompts for a save location, choose the watched folder. One click handles one native ZIP export.
+- **Statistics**. Filter by nickname, sort columns, and export the CSV. Identity coverage counts appearances. The table displays per-unit stats and the number of opportunities behind each rate.
+
+Dashboard imports use direct winner evidence. Import with the CLI’s session options below when you have confirmed which files share an anonymous-token scope. Point both tools at the same database to see the additional matches.
 
 ## Install and try the CLI
 

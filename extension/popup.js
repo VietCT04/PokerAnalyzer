@@ -3,10 +3,12 @@
 const historyButton = document.querySelector("#history");
 const captureButton = document.querySelector("#capture");
 const downloadButton = document.querySelector("#download");
+const importButton = document.querySelector("#import");
 const exportButton = document.querySelector("#export");
 const selection = document.querySelector("#selection");
 const status = document.querySelector("#status");
 const count = document.querySelector("#count");
+const dashboardUrl = document.querySelector("#dashboard").href;
 
 async function inspect(action) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -27,6 +29,7 @@ function showPage(page) {
   historyButton.hidden = !!page.canCapture;
   captureButton.disabled = !page.canCapture;
   downloadButton.disabled = !page.canDownload;
+  importButton.disabled = !page.canCapture || !page.canDownload;
   if (!page.available) {
     selection.textContent = "Open Rush & Cash on my.pokercraft.com.";
     status.textContent = "";
@@ -46,12 +49,53 @@ function showPage(page) {
   }
 }
 
+async function dashboardRequest(path, body) {
+  const options = body ? {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-PokerAnalyzer": "1"},
+    body: JSON.stringify(body),
+  } : undefined;
+  let response;
+  try {
+    response = await fetch(dashboardUrl + path, options);
+  } catch {
+    throw new Error("Start the local PokerAnalyzer dashboard first.");
+  }
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Dashboard request failed.");
+  return result;
+}
+
+async function downloadAndImport() {
+  const state = await dashboardRequest("api/job");
+  if (state.status === "waiting" || state.status === "importing") {
+    throw new Error("An export is already pending in the dashboard.");
+  }
+  const page = await inspect("capture");
+  if (!page.records?.length) throw new Error("No usable winner rows were captured.");
+  await saveCapture(page.records);
+  const job = await dashboardRequest("api/watch", {records: page.records, partial: !!page.stopped});
+  const dashboard = await chrome.tabs.create({url: dashboardUrl, active: false});
+  const result = await inspect("download");
+  if (!result.clicked) {
+    await dashboardRequest("api/stop", {id: job.id});
+    throw new Error("PokerCraft’s ZIP download is unavailable for the current selection.");
+  }
+  await chrome.tabs.update(dashboard.id, {active: true});
+}
+
 async function run(action) {
   historyButton.disabled = true;
   captureButton.disabled = true;
   downloadButton.disabled = true;
-  if (action === "capture") status.textContent = "Capturing rendered hand pages…";
+  importButton.disabled = true;
+  if (action === "capture" || action === "import") status.textContent = "Capturing rendered hand pages…";
   try {
+    if (action === "import") {
+      await downloadAndImport();
+      window.close();
+      return;
+    }
     const page = await inspect(action);
     if (page.clicked) {
       window.close();
@@ -70,6 +114,10 @@ async function run(action) {
       showPage(page);
     }
   } catch (error) {
+    if (action) {
+      try { showPage(await inspect()); }
+      catch { /* The tab may have closed. */ }
+    }
     status.textContent = error.message;
   }
 }
@@ -77,6 +125,7 @@ async function run(action) {
 historyButton.addEventListener("click", () => run("history"));
 captureButton.addEventListener("click", () => run("capture"));
 downloadButton.addEventListener("click", () => run("download"));
+importButton.addEventListener("click", () => run("import"));
 
 function showSaved(records) {
   const hands = new Set(records.map(([hand]) => hand));

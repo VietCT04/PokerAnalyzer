@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PokerAnalyzer</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell header-inner">
+      <a class="brand" href="/">Poker<span>Analyzer</span></a>
+      <span class="local">Local database</span>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="page-heading">
+      <div><h1>Hand history</h1><p>Import PokerCraft exports and review verified player statistics.</p></div>
+      <a class="button secondary" href="/stats.csv" download>Export stats CSV</a>
+    </div>
+    <section class="metrics" aria-label="Database coverage">
+      <article class="metric"><h2>Hands imported</h2><strong id="hands">—</strong><p id="net">Reconciled net</p></article>
+      <article class="metric"><h2>Identity coverage</h2><strong id="coverage">—</strong><progress id="coverage-bar" max="100" value="0" aria-label="Identity coverage"></progress><p id="appearances">Identified appearances</p></article>
+      <article class="metric"><h2>Verified mappings</h2><strong id="mappings">—</strong><p>Scoped winner evidence</p></article>
+      <article class="metric"><h2>Conflicting matches</h2><strong id="conflicts">—</strong><p>Excluded from player stats</p></article>
+    </section>
+    <section class="panel import-panel" aria-labelledby="import-title">
+      <div class="import-description">
+        <h2 id="import-title">Import hands</h2>
+        <p>Use <strong>Download &amp; import</strong> in the Chrome extension for a new PokerCraft batch, or choose ZIP and winner CSV files you’ve already downloaded.</p>
+      </div>
+      <form id="import-form" class="import-form">
+        <label class="button secondary file-button">
+          Choose files
+          <input id="files" name="files" type="file" accept=".zip,.csv" multiple required>
+        </label>
+        <button class="button primary" id="import" type="submit" disabled>Import files</button>
+        <p id="file-summary" class="file-summary">ZIP and CSV files</p>
+      </form>
+      <div id="job" class="notice" hidden>
+        <span id="job-status" role="status"></span>
+        <button type="button" class="text-button" id="stop" hidden>Stop waiting</button>
+      </div>
+      <p id="import-status" class="notice" role="status" hidden></p>
+    </section>
+    <section class="panel player-panel" aria-labelledby="players-title">
+      <div class="player-heading">
+        <div><h2 id="players-title">Player statistics</h2><p id="player-count">Verified nicknames</p></div>
+        <label class="search-label">
+          <span>Filter by nickname</span>
+          <input id="search" type="search" placeholder="Search nickname" autocomplete="off">
+        </label>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" data-key="nickname"><button type="button">Nickname</button></th>
+              <th scope="col" data-key="observed_hands_in_unit"><button type="button">Hands</button></th>
+              <th scope="col" data-key="vpip_pct"><button type="button">VPIP</button></th>
+              <th scope="col" data-key="pfr_pct"><button type="button">PFR</button></th>
+              <th scope="col" data-key="three_bet_pct"><button type="button">3-bet</button></th>
+              <th scope="col" data-key="net_winnings"><button type="button">Net winnings</button></th>
+              <th scope="col" data-key="bb_per_100"><button type="button">bb/100</button></th>
+            </tr>
+          </thead>
+          <tbody id="players"></tbody>
+        </table>
+      </div>
+      <p id="empty" class="empty">Loading player statistics…</p>
+      <button type="button" id="more" class="button secondary more" hidden>Show more</button>
+    </section>
+  </main>
+</body>
+</html>
