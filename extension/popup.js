@@ -76,12 +76,24 @@ async function downloadAndImport() {
   await saveCapture(page.records);
   const job = await dashboardRequest("api/watch", {records: page.records, partial: !!page.stopped});
   const dashboard = await chrome.tabs.create({url: dashboardUrl, active: false});
-  const result = await inspect("download");
-  if (!result.clicked) {
-    await dashboardRequest("api/stop", {id: job.id});
-    throw new Error("PokerCraft’s ZIP download is unavailable for the current selection.");
+  status.textContent = "Winner records saved. Waiting for PokerCraft’s hand-history ZIP…";
+  try {
+    if (!(await inspect("download")).clicked) return false;
+  } catch {
+    // The saved capture can still be paired with a download started on PokerCraft.
+    return false;
   }
-  await chrome.tabs.update(dashboard.id, {active: true});
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const current = await dashboardRequest("api/job");
+    if (current.id !== job.id) break;
+    if (current.status === "importing" || current.status === "complete") {
+      await chrome.tabs.update(dashboard.id, {active: true});
+      return true;
+    }
+    if (current.status !== "waiting") break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return false;
 }
 
 async function run(action) {
@@ -92,8 +104,13 @@ async function run(action) {
   if (action === "capture" || action === "import") status.textContent = "Capturing rendered hand pages…";
   try {
     if (action === "import") {
-      await downloadAndImport();
-      window.close();
+      if (await downloadAndImport()) {
+        window.close();
+      } else {
+        try { showPage(await inspect()); }
+        catch { /* The saved capture remains available if the tab closed. */ }
+        status.textContent = "Winner records saved. If Chrome has no ZIP download in progress, click Download on the PokerCraft page. The dashboard is waiting for the ZIP.";
+      }
       return;
     }
     const page = await inspect(action);

@@ -103,6 +103,9 @@ function renderDashboard(data) {
   byId("coverage-methods").textContent = `${number.format(data.direct)} direct · ${number.format(data.inferred)} inferred`;
   byId("mappings").textContent = number.format(data.mappings);
   byId("conflicts").textContent = number.format(data.conflicts);
+  const pending = byId("pending-histories");
+  pending.hidden = !data.unlinked;
+  pending.textContent = countLabel(data.unlinked, "winner record") + " awaiting matching hand histories.";
   players = data.players;
   renderPlayers();
   if (data.analysis) renderAnalysis(data.analysis);
@@ -139,12 +142,13 @@ function showImport(message, error = false) {
 async function pollJob() {
   try {
     const job = await request("/api/job");
+    const recorded = job.observations ? countLabel(job.observations, "winner record") + " saved. " : "";
     const messages = {
-      waiting: "Winner capture saved. Waiting for the matching PokerCraft ZIP in your downloads folder.",
+      waiting: recorded + "Waiting for the hand-history ZIP. If Chrome has no download in progress, click Download on PokerCraft.",
       importing: "Importing " + job.file + "…",
       complete: "Import complete. " + describeImport(job.counts || {}) +
         (job.partial ? ". Capture stopped before a later page rendered." : ""),
-      timeout: "Winner capture saved. If the ZIP downloaded elsewhere, choose it above to finish the import.",
+      timeout: recorded + "The matching ZIP did not arrive in time. Download it from PokerCraft and import the ZIP here.",
       stopped: "Stopped waiting for a ZIP.",
       error: job.message,
     };
@@ -159,7 +163,7 @@ async function pollJob() {
       catch (error) { showImport(error.message, true); }
     };
     const key = job.id + ":" + job.status;
-    if (key !== lastJob && job.status === "complete") await loadDashboard();
+    if (key !== lastJob && (job.status === "waiting" || job.status === "complete")) await loadDashboard();
     lastJob = key;
   } catch (error) {
     showImport(error.message, true);
