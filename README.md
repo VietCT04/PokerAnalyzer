@@ -33,6 +33,21 @@ python dashboard.py --db research-data/recovered.sqlite --open
 
 Rebuild checks file hashes and replays the batches in order. If you continue importing into the new database, keep its new `.raw` folder with the original. For a later rebuild, pass `--raw` once for each archive, oldest first. Invalid imports leave their raw files and a `.failed.json` manifest for inspection. Rebuild skips those failed manifests. Reimport any pre-archive ZIPs and CSVs you still have to preserve them in the raw archive.
 
+## Offline preflop video pilot
+
+Use a recording after play ends. Install [Tesseract with English data](https://tesseract-ocr.github.io/tessdoc/Installation.html) and make its executable available on PATH or pass `--tesseract PATH`. These dependencies are only for video extraction. FFmpeg is supplied by `imageio-ffmpeg`.
+
+```powershell
+python -m pip install -r requirements-video.txt
+python video_preflop.py "G:\vidPoker\recording.mp4" --start 45 --review-frames --output research-data/video-pilot
+```
+
+Use a new output directory per run. Set `--start 0` if play is visible from the beginning. The bundled layout is calibrated to one 1280 × 720 three-table, six-max Rush & Cash layout with four-color cards, stacks in BB, and a 0.5/1 BB blind structure. For a different recording layout, adjust a copy of `examples/rush-video-layout.json` against a preflop screenshot and pass `--layout PATH`.
+
+The pilot samples four frames per second, groups nearby frames with the same visible hole cards on the same table, and selects a candidate with an empty board and a pot OCR reading of 1.5 BB. It writes six CSV seat observations per snapshot, plus runtime and output counts in `benchmark.json`. This screen evidence may omit hands. Compare selected rows with the optional `frames/` crops using the snapshot ID. The video timestamp, screen table and visual seat locate each observation.
+
+Nickname candidates and raw OCR require review, especially when a seat label is small or replaced with a posting message. The CSV keeps the displayed stack separate from the estimated beginning stack. Where the displayed blinds or visible dealer button support the interpretation, the estimator adds back the posted blind. It leaves an empty estimate if it cannot resolve the blind amounts or if the OCR and dealer evidence disagree. The recorded player's hole-card pair belongs to the bottom seat, with rank read by OCR and suit from the four-color deck. Keep the source video, CSV and review crops private. The pilot writes local outputs independently of PokerAnalyzer's hand histories and identity database.
+
 ## Install and try the CLI
 
 Install Python 3.10 or later. Run these commands from a terminal. The Python standard library supplies everything the CLI uses.
