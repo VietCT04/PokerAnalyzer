@@ -33,6 +33,33 @@ python dashboard.py --db research-data/recovered.sqlite --open
 
 Rebuild checks file hashes and replays the batches in order. If you continue importing into the new database, keep its new `.raw` folder with the original. For a later rebuild, pass `--raw` once for each archive, oldest first. Invalid imports leave their raw files and a `.failed.json` manifest for inspection. Rebuild skips those failed manifests. Reimport any pre-archive ZIPs and CSVs you still have to preserve them in the raw archive.
 
+## Offline preflop video pilot
+
+Use a recording after play ends. Install [Tesseract with English data](https://tesseract-ocr.github.io/tessdoc/Installation.html) and make its executable available on PATH or pass `--tesseract PATH`. These dependencies are only for video extraction. FFmpeg is supplied by `imageio-ffmpeg`.
+
+```powershell
+python -m pip install -r requirements-video.txt
+python video_preflop.py "G:\vidPoker\recording.mp4" --start 45 --review-frames --output research-data/video-pilot
+```
+
+Use a new output directory per run. Set `--start 0` if play is visible from the beginning. The bundled layout is calibrated to one 1280 × 720 three-table, six-max Rush & Cash layout with four-color cards, stacks in BB, and a 0.5/1 BB blind structure. For a different recording layout, adjust a copy of `examples/rush-video-layout.json` against a preflop screenshot and pass `--layout PATH`.
+
+The pilot samples four frames per second, groups nearby frames with the same visible hole cards on the same table, and selects a candidate with an empty board and a pot OCR reading of 1.5 BB. This screen evidence may omit hands. Open `review.html` in your browser after the run. Search by nickname or timestamp, filter by table, and review the seats, stacks, and hole cards together. With `--review-frames`, expand a nickname or an unresolved seat and click its crop to enlarge the source pixels. The shown timestamp belongs to the name crop, which can come from a later frame in the same hand. Use **Show table frame** for the original preflop snapshot. Keep the `frames/` folder next to the report so the image links work. The output also includes structured seat observations in `preflop.csv` and processing metrics in `benchmark.json`.
+
+For clearer nicknames, add the optional CPU recognizer. Download RapidOCR's English PP-OCRv5 mobile recognition model once, then pass its local file with `--nickname-model`. Tesseract still reads pots, stacks and card ranks. [RapidOCR model registry](https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml)
+
+```powershell
+python -m pip install onnxruntime
+New-Item -ItemType Directory -Force research-data/models
+Invoke-WebRequest -Uri "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/en_PP-OCRv5_rec_mobile.onnx" -OutFile research-data/models/en_PP-OCRv5_rec_mobile.onnx
+Get-FileHash research-data/models/en_PP-OCRv5_rec_mobile.onnx
+python video_preflop.py "G:\vidPoker\recording.mp4" --start 45 --nickname-model research-data/models/en_PP-OCRv5_rec_mobile.onnx --review-frames --output research-data/video-pilot-enhanced
+```
+
+The model's published SHA-256 is `c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8`. With the model enabled, the pilot checks later preflop frames with matching visible hole cards and compatible dealer positions. This can recover a name after a blind-posting message clears. For an unreadable name, it searches a wider strip around the label and requires the wider crop and the detected text bounds to agree. Each candidate includes its source timestamp and how many frames supported it. Blank candidates flag weak or conflicting reads. Repeated reads and high model scores can still share the same OCR error.
+
+The report keeps the displayed stack separate from the estimated beginning stack. Four-digit integer readings receive an extra check when the optional model is available, since a missed decimal can make the stack look ten times larger. The report marks unresolved readings for review. Where the displayed blinds or visible dealer button support the interpretation, the estimator adds back the posted blind. It leaves an empty estimate if it cannot resolve the blind amounts or if the OCR and dealer evidence disagree. The recorded player's hole-card pair belongs to the bottom seat, with rank read by OCR and suit from the four-color deck. Keep the source video, report, CSV and review crops private. The pilot writes local outputs independently of PokerAnalyzer's hand histories and identity database.
+
 ## Install and try the CLI
 
 Install Python 3.10 or later. Run these commands from a terminal. The Python standard library supplies everything the CLI uses.
