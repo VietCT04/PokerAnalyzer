@@ -25,6 +25,11 @@ class NicknameOcrTest(unittest.TestCase):
         self.assertEqual(result[0], "")
         self.assertEqual(result[4], "disagrees")
 
+    def test_unresolved_preview_uses_the_frame_with_the_attempted_name(self):
+        banner, name_crop = object(), object()
+        result = select_nickname([(12, "Post Blinds", 99, banner), (12.5, "ChipRunner", 80, name_crop)])
+        self.assertEqual(result, ("", None, 12.5, 0, "unreadable", "ChipRunner", name_crop))
+
     def test_posting_label_is_excluded(self):
         result = select_nickname([(12, "Post Blinds", 99, None), (12.5, "ChipRunner", 91, None)])
         self.assertEqual(result[:5], ("ChipRunner", 91, 12.5, 1, "single_frame_ocr"))

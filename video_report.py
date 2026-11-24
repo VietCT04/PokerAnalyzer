@@ -73,7 +73,13 @@ PAGE = """<!doctype html>
   .proof summary, .frame summary { cursor: pointer; }
   .proof summary { color: var(--green); }
   .proof summary.missing { color: var(--amber); }
-  .proof img { display: block; max-width: 100%; max-height: 70px; object-fit: contain; object-position: left; margin: 5px 0; }
+  .proof img { display: block; max-width: 100%; max-height: 70px; object-fit: contain; object-position: left; margin: 5px 0; image-rendering: pixelated; }
+  .proof a { cursor: zoom-in; }
+  #crop-zoom { width: min(90vw, 720px); max-height: 85vh; padding: 16px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); }
+  #crop-zoom::backdrop { background: #101a19b3; }
+  .zoom-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .zoom-header button { font: inherit; cursor: pointer; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--paper); }
+  #zoom-image { display: block; width: 100%; max-height: 62vh; object-fit: contain; image-rendering: pixelated; }
   .ocr-meta { color: var(--muted); font-size: .82rem; margin: 5px 0 2px; }
   .frame { padding: 8px 12px; color: var(--green); font-size: .86rem; }
   .frame img { display: block; width: min(100%, 478px); height: auto; margin: 8px 0 2px; border-radius: 5px; }
@@ -106,8 +112,15 @@ PAGE = """<!doctype html>
 </div>
 <div id="hands">$sections</div>
 <p id="empty" hidden>No snapshots match these filters.</p>
-<p class="foot">All stacks are in big blinds. Starting stacks are estimates from visible blind evidence. Select a nickname to inspect its OCR details.</p>
+<p class="foot">All stacks are in big blinds. Starting stacks are estimates from visible blind evidence. Select a nickname or unresolved seat, then click the crop to enlarge it.</p>
 </main>
+<dialog id="crop-zoom" aria-labelledby="zoom-title">
+  <form method="dialog" class="zoom-header">
+    <h2 id="zoom-title">Nickname crop</h2>
+    <button>Close</button>
+  </form>
+  <img id="zoom-image" alt="">
+</dialog>
 <script>
   const query = document.querySelector('#query');
   const table = document.querySelector('#table');
@@ -115,6 +128,17 @@ PAGE = """<!doctype html>
   const hands = Array.from(document.querySelectorAll('.hand'));
   const count = document.querySelector('#count');
   const empty = document.querySelector('#empty');
+  const zoom = document.querySelector('#crop-zoom');
+  const zoomImage = document.querySelector('#zoom-image');
+  document.querySelector('#hands').addEventListener('click', event => {
+    const link = event.target.closest('.proof a');
+    if (link && zoom.showModal && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      zoomImage.src = link.href;
+      zoomImage.alt = link.querySelector('img').alt;
+      zoom.showModal();
+    }
+  });
   function filter() {
     const term = query.value.trim().toLocaleLowerCase();
     let shown = 0;
@@ -182,18 +206,20 @@ def nickname_markup(row, output):
     filename = f'{int(row["snapshot_id"]):04}-{row["visual_seat"]}.png'
     image = image_link(output, filename, f"Source name label in the {seat} seat")
     evidence = []
+    timestamp = row["nickname_video_seconds"]
+    if timestamp is not None:
+        evidence.append("Frame " + timecode(timestamp))
     if label:
-        timestamp = row["nickname_video_seconds"]
-        if timestamp is not None:
-            evidence.append("Frame " + timecode(timestamp))
         support = int(row["nickname_support"])
         evidence.append(f"{support} supporting frame" + ("s" if support != 1 else ""))
         if status == "wide_label_ocr":
             evidence.append("Wider label crop")
         if row["nickname_confidence"] is not None:
             evidence.append(f'OCR score {row["nickname_confidence"]}')
-    elif row["nickname_ocr"]:
-        evidence.append(f'OCR read {row["nickname_ocr"]}')
+    else:
+        evidence.append("No nickname accepted")
+        if row["nickname_ocr"]:
+            evidence.append(f'OCR read {row["nickname_ocr"]}')
     if not image and not evidence:
         return f'<span class="{css}">{title}</span>'
     meta = f'<p class="ocr-meta">{escape(" · ".join(evidence))}</p>' if evidence else ""

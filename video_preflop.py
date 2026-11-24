@@ -322,12 +322,14 @@ def select_nickname(readings):
         support, score, seconds, label, text, crop = choices[0]
         rival = choices[1] if len(choices) > 1 else None
         if rival and ((support == rival[0] and rival[1] >= score - 12) or (rival[0] >= 2 and rival[1] >= 65)):
-            return "", None, None, 0, "disagrees", text, None
+            return "", None, seconds, 0, "disagrees", text, crop
         if (support >= 2 and score >= 75) or score >= 88:
             status = "repeated_ocr" if support >= 2 else "single_frame_ocr"
             return label, round(score, 1), seconds, support, status, text, crop
-    raw = max(readings, key=lambda reading: reading[2])[1] if readings else ""
-    return "", None, None, 0, "unreadable", raw, None
+    if not readings:
+        return "", None, None, 0, "unreadable", "", None
+    seconds, text, _, crop = max(readings, key=lambda reading: (bool(nickname(reading[1])), reading[2]))
+    return "", None, seconds, 0, "unreadable", text, crop
 
 
 def open_nickname_model(model):
@@ -539,7 +541,7 @@ def observations(selected, tesseract, work, layout, review_folder, model):
             yield {
                 "snapshot_id": snapshot_id, "table": sample.table, "video_seconds": round(sample.seconds, 3),
                 "visual_seat": seat, "nickname_candidate": name, "nickname_confidence": confidence,
-                "nickname_video_seconds": round(name_seconds, 3) if name_seconds is not None else None,
+                "nickname_video_seconds": round(name_seconds if name_seconds is not None else sample.seconds, 3),
                 "nickname_support": support, "nickname_status": status, "visible_stack_bb": visible,
                 "starting_stack_bb": starting, "posted_blind_bb": posted.get(i),
                 "starting_stack_method": method if starting is not None else "",
