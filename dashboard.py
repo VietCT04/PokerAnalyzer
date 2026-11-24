@@ -18,12 +18,14 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PureWindowsPath
 from tempfile import TemporaryDirectory
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from zipfile import BadZipFile
 
+from betting_tendencies import tendencies_report
 from hand_history import HEADER, hands_in_zip, normalize_id
 from identity import DEFAULT_ACCOUNT, account_label
 from poker_analyzer import STATS_COLUMNS, connect, coverage_summary, import_batch, statistics
+from river_bdi import bdi_report
 
 
 PORT = 8766
@@ -236,7 +238,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not self.trusted_host():
             self.send_json({"error": "Use the local dashboard address."}, HTTPStatus.FORBIDDEN)
             return
-        route = urlsplit(self.path).path
+        target = urlsplit(self.path)
+        route = target.path
         static = {
             "/": ("index.html", "text/html"),
             "/app.js": ("app.js", "text/javascript"),
@@ -248,7 +251,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.respond((ASSETS / filename).read_bytes(), mime + "; charset=utf-8")
             elif route == "/api/job":
                 self.send_json(self.server.job.snapshot())
-            elif route in ("/api/dashboard", "/stats.csv"):
+            elif route in ("/api/dashboard", "/api/bdi", "/api/tendencies", "/stats.csv"):
                 with closing(connect(self.server.job.db_path)) as db:
                     db.execute("BEGIN")
                     if route == "/api/dashboard":
@@ -259,6 +262,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             if summary.get("identity_model") == "timestamp":
                                 data["analysis"] = summary
                         self.send_json(data)
+                    elif route == "/api/bdi":
+                        self.send_json(bdi_report(db))
+                    elif route == "/api/tendencies":
+                        player = parse_qs(target.query).get("player", [None])[0]
+                        self.send_json(tendencies_report(db, player))
                     else:
                         stream = io.StringIO(newline="")
                         writer = csv.writer(stream)

@@ -78,6 +78,32 @@ progress::-moz-progress-bar { background: var(--accent); }
 .analysis-metrics dt { color: var(--muted); font-size: .86rem; }
 .analysis-metrics dd { margin: 0; color: var(--text); font-size: 1.36rem; font-weight: 660; }
 
+.bdi-panel { margin-bottom: 15px; }
+.bdi-panel summary { padding: 13px 18px; font-weight: 700; cursor: pointer; }
+.bdi-panel summary span { margin-left: 8px; color: var(--muted); font-size: .83rem; font-weight: 400; }
+.bdi-description { margin: 0 18px 8px; font-size: .87rem; }
+.bdi-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 14px; margin: 8px 18px; }
+.bdi-controls label { display: grid; gap: 3px; color: var(--muted); font-size: .82rem; }
+.bdi-controls select {
+  min-width: 145px; max-width: 230px; padding: 6px 8px; font: inherit; color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+}
+.bdi-controls p { margin-left: auto; font-size: .8rem; padding-bottom: 6px; }
+.bdi-track { position: relative; height: 6px; min-width: 74px; max-width: 120px; margin: 3px 0 1px auto; background: #2f3b33; }
+.bdi-track::after { position: absolute; top: -2px; bottom: -2px; left: 50%; width: 1px; background: var(--muted); content: ""; }
+.bdi-track progress { position: absolute; width: 50%; height: 100%; margin: 0; border-radius: 0; }
+.bdi-track progress::-webkit-progress-bar { background: transparent; }
+.bdi-positive { left: 50%; }
+.bdi-negative { right: 50%; transform: scaleX(-1); }
+.bdi-negative::-webkit-progress-value { background: var(--negative); }
+.bdi-negative::-moz-progress-bar { background: var(--negative); }
+.tendency-scroll { max-height: 30rem; overflow: auto; }
+.tendency-scroll thead { position: sticky; top: 0; z-index: 1; }
+.tendency-scroll th:nth-child(2), .tendency-scroll td:nth-child(2) { text-align: left; }
+.tendency-scroll td:first-child, .tendency-scroll td:nth-child(2) { max-width: 290px; white-space: normal; }
+.profile-link { font: inherit; text-align: left; cursor: pointer; border: 0; padding: 0; background: none; color: var(--accent); }
+.profile-link:hover { text-decoration: underline; }
+
 .player-heading { padding: 16px 18px 14px; }
 .search-label { display: grid; gap: 4px; color: var(--muted); font-size: .88rem; }
 .search-label input {
