@@ -46,7 +46,19 @@ Use a new output directory per run. Set `--start 0` if play is visible from the 
 
 The pilot samples four frames per second, groups nearby frames with the same visible hole cards on the same table, and selects a candidate with an empty board and a pot OCR reading of 1.5 BB. It writes six CSV seat observations per snapshot, plus runtime and output counts in `benchmark.json`. This screen evidence may omit hands. Compare selected rows with the optional `frames/` crops using the snapshot ID. The video timestamp, screen table and visual seat locate each observation.
 
-Nickname candidates and raw OCR require review, especially when a seat label is small or replaced with a posting message. The CSV keeps the displayed stack separate from the estimated beginning stack. Where the displayed blinds or visible dealer button support the interpretation, the estimator adds back the posted blind. It leaves an empty estimate if it cannot resolve the blind amounts or if the OCR and dealer evidence disagree. The recorded player's hole-card pair belongs to the bottom seat, with rank read by OCR and suit from the four-color deck. Keep the source video, CSV and review crops private. The pilot writes local outputs independently of PokerAnalyzer's hand histories and identity database.
+For clearer nicknames, add the optional CPU recognizer. Download RapidOCR's English PP-OCRv5 mobile recognition model once, then pass its local file with `--nickname-model`. Tesseract still reads pots, stacks and card ranks. [RapidOCR model registry](https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml)
+
+```powershell
+python -m pip install onnxruntime
+New-Item -ItemType Directory -Force research-data/models
+Invoke-WebRequest -Uri "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/en_PP-OCRv5_rec_mobile.onnx" -OutFile research-data/models/en_PP-OCRv5_rec_mobile.onnx
+Get-FileHash research-data/models/en_PP-OCRv5_rec_mobile.onnx
+python video_preflop.py "G:\vidPoker\recording.mp4" --start 45 --nickname-model research-data/models/en_PP-OCRv5_rec_mobile.onnx --review-frames --output research-data/video-pilot-enhanced
+```
+
+The model's published SHA-256 is `c3461add59bb4323ecba96a492ab75e06dda42467c9e3d0c18db5d1d21924be8`. With the model enabled, the pilot checks later preflop frames with matching visible hole cards and compatible dealer positions. This can recover a name after a blind-posting message clears. Each candidate includes its source timestamp and how many frames supported it. Blank candidates flag weak or conflicting reads. The score is a model score, and repeated reads can share the same OCR error. With `--review-frames`, the numbered JPEG shows the original preflop snapshot and the seat-specific PNG shows the exact nickname crop used.
+
+The CSV keeps the displayed stack separate from the estimated beginning stack. Where the displayed blinds or visible dealer button support the interpretation, the estimator adds back the posted blind. It leaves an empty estimate if it cannot resolve the blind amounts or if the OCR and dealer evidence disagree. The recorded player's hole-card pair belongs to the bottom seat, with rank read by OCR and suit from the four-color deck. Keep the source video, CSV and review crops private. The pilot writes local outputs independently of PokerAnalyzer's hand histories and identity database.
 
 ## Install and try the CLI
 

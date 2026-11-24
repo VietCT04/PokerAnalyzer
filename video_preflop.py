@@ -4,6 +4,7 @@ import argparse
 import csv
 import io
 import json
+import math
 import os
 import re
 import subprocess
@@ -25,6 +26,7 @@ AMOUNT = r"[0-9]{1,4}(?:[.,][0-9])?"
 BB = r"(?:BB|8B|B8|BE|8E)"
 FIELD_COLUMNS = (
     "snapshot_id", "table", "video_seconds", "visual_seat", "nickname_candidate", "nickname_confidence",
+    "nickname_video_seconds", "nickname_support", "nickname_status",
     "visible_stack_bb", "starting_stack_bb", "posted_blind_bb", "recorded_player_cards",
     "starting_stack_method", "dealer_visual_seat", "pot_bb", "nickname_ocr", "stack_ocr", "blind_ocr",
 )
@@ -92,13 +94,37 @@ def dealer_seat(frame, layout, offset):
 class FrameSample:
     seconds: float
     table: str
-    suits: str
+    signature: tuple
     dealer: str
     crops: dict
     review_jpeg: bytes
 
 
-def snapshot(frame, seconds, table, offset, suits, dealer, layout, review):
+@dataclass
+class HandSamples:
+    anchors: list
+    name_frames: list
+
+
+def has_name_text(crop, is_bottom):
+    red, green, blue = crop.astype(np.int16).transpose(2, 0, 1)
+    if is_bottom:
+        ink = (red - green >= 22) & (green - blue >= 17) & (red >= 135)
+    else:
+        neutral = np.maximum(red, blue) - np.minimum(red, blue) < 40
+        white = neutral & (crop.min(axis=2) >= 115)
+        purple = (blue >= 125) & (blue - green >= 35) & (red - green >= 15)
+        ink = white | purple
+    rows = ink.sum(axis=1) >= 3
+    return bool(np.any(rows[:-3] & rows[1:-2] & rows[2:-1] & rows[3:]))
+
+
+def name_frame(frame, seconds, signature, dealer, offset, layout):
+    crops = [region(frame, boxes["name"], offset).copy() for boxes in layout["seats"].values()]
+    return seconds, signature, dealer, crops
+
+
+def snapshot(frame, seconds, table, offset, signature, dealer, layout, review):
     crops = {"pot": region(frame, layout["pot"], offset).copy()}
     for index, card in enumerate(layout["cards"]):
         crops[f"rank{index}"] = region(frame, card["rank"], offset).copy()
@@ -108,10 +134,10 @@ def snapshot(frame, seconds, table, offset, suits, dealer, layout, review):
     photo = io.BytesIO()
     if review:
         Image.fromarray(region(frame, layout["review_crop"], offset)).save(photo, format="JPEG", quality=94)
-    return FrameSample(seconds, table, suits, dealer, crops, photo.getvalue())
+    return FrameSample(seconds, table, signature, dealer, crops, photo.getvalue())
 
 
-def scan_frames(video, layout, start, fps, review):
+def scan_frames(video, layout, start, fps, review, enhance_names):
     width, height = layout["size"]
     size = width * height * 3
     cmd = [
@@ -137,7 +163,7 @@ def scan_frames(video, layout, start, fps, review):
                 previous = groups.get(table)
                 if previous:
                     previous_signature, last_seen, samples = previous
-                    first = samples[0]
+                    first = samples.anchors[0]
                     same_dealer = dealer and dealer == first.dealer
                     close = seconds - first.seconds <= (1.25 if same_dealer else 0.25)
                     similar = seconds - last_seen <= (6 if same_dealer else 1.25) and same_pocket(
@@ -145,10 +171,19 @@ def scan_frames(video, layout, start, fps, review):
                     )
                     if close or similar:
                         groups[table] = (previous_signature, seconds, samples)
-                        if len(samples) < 4 and seconds - first.seconds <= 1.5:
-                            samples.append(snapshot(frame, seconds, table, offset, signature[0], dealer, layout, review))
+                        if len(samples.anchors) < 4 and seconds - first.seconds <= 1.5:
+                            samples.anchors.append(snapshot(
+                                frame, seconds, table, offset, signature, dealer, layout, review
+                            ))
+                        last_name = samples.name_frames[-1][0] if samples.name_frames else first.seconds
+                        if (enhance_names and seconds - first.seconds <= 3 and seconds - last_seen <= .75
+                                and seconds - last_name >= .5
+                                and (same_dealer or not dealer or not first.dealer)
+                                and same_pocket(previous_signature, signature)):
+                            samples.name_frames.append(name_frame(frame, seconds, signature, dealer, offset, layout))
                         continue
-                samples = [snapshot(frame, seconds, table, offset, signature[0], dealer, layout, review)]
+                anchor = snapshot(frame, seconds, table, offset, signature, dealer, layout, review)
+                samples = HandSamples([anchor], [])
                 groups[table] = (signature, seconds, samples)
                 captures.append(samples)
         decoder.wait()
@@ -237,6 +272,118 @@ def nickname(text):
     return ""
 
 
+def select_nickname(readings):
+    by_label = defaultdict(dict)
+    for seconds, text, score, crop in readings:
+        label = nickname(text)
+        if not label or score < 65:
+            continue
+        votes = by_label[label.casefold()]
+        if seconds not in votes or score > votes[seconds][1]:
+            votes[seconds] = (label, score, text, crop)
+    choices = []
+    for votes in by_label.values():
+        seconds, (label, score, text, crop) = max(votes.items(), key=lambda item: item[1][1])
+        choices.append((len(votes), score, seconds, label, text, crop))
+    choices.sort(key=lambda choice: choice[:2], reverse=True)
+    if choices:
+        support, score, seconds, label, text, crop = choices[0]
+        rival = choices[1] if len(choices) > 1 else None
+        if rival and ((support == rival[0] and rival[1] >= score - 12) or (rival[0] >= 2 and rival[1] >= 65)):
+            return "", None, None, 0, "disagrees", text, None
+        if (support >= 2 and score >= 75) or score >= 88:
+            status = "repeated_ocr" if support >= 2 else "single_frame_ocr"
+            return label, round(score, 1), seconds, support, status, text, crop
+    raw = max(readings, key=lambda reading: reading[2])[1] if readings else ""
+    return "", None, None, 0, "unreadable", raw, None
+
+
+def open_nickname_model(model):
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise ValueError("Install onnxruntime to use --nickname-model") from exc
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    try:
+        session = ort.InferenceSession(str(model), sess_options=options, providers=["CPUExecutionProvider"])
+    except Exception as exc:
+        raise ValueError(f"Cannot load nickname model: {exc}") from exc
+    characters = session.get_modelmeta().custom_metadata_map.get("character", "").splitlines()
+    alphabet = ["", *characters, " "]
+    if not characters or session.get_outputs()[0].shape[-1] != len(alphabet):
+        raise ValueError("Use RapidOCR's English PP-OCRv5 mobile recognition ONNX model")
+    return session, alphabet
+
+
+def recognize_names(crops, session, alphabet):
+    input_name = session.get_inputs()[0].name
+    height, batch_size = 48, 16
+    results = []
+    for start in range(0, len(crops), batch_size):
+        images = crops[start:start + batch_size]
+        widths = [min(384, math.ceil(height * image.shape[1] / image.shape[0])) for image in images]
+        width = 32 * math.ceil(max(widths) / 32)
+        batch = np.zeros((len(images), 3, height, width), dtype=np.float32)
+        for row, pixels, resized_width in zip(batch, images, widths):
+            image = Image.fromarray(pixels).resize((resized_width, height), Image.Resampling.BILINEAR)
+            row[:, :, :resized_width] = np.asarray(image, dtype=np.float32).transpose(2, 0, 1) / 127.5 - 1
+        probabilities = session.run(None, {input_name: batch})[0]
+        for sequence, scores in zip(probabilities.argmax(axis=-1), probabilities.max(axis=-1)):
+            keep = sequence != 0
+            keep[1:] &= sequence[1:] != sequence[:-1]
+            results.append(("".join(alphabet[index] for index in sequence[keep]),
+                            100 * float(scores[keep].min()) if keep.any() else 0.0))
+    return results
+
+
+def frame_nickname_readings(candidates, session, alphabet):
+    pages = {}
+    assignments = []
+    for row in candidates:
+        readings = []
+        for seconds, pixels in row:
+            key = pixels.shape, pixels.tobytes()
+            if key not in pages:
+                pages[key] = len(pages), pixels
+            readings.append((seconds, pages[key][0], pixels))
+        assignments.append(readings)
+    ocr = recognize_names([pixels for _, pixels in pages.values()], session, alphabet)
+    return [[(seconds, *ocr[page], pixels) for seconds, page, pixels in readings] for readings in assignments]
+
+
+def read_names(selected, tesseract, work, seats, model):
+    crops = [sample.crops[f"{seat}.name"] for sample, _ in selected for seat in seats]
+    if model is None:
+        times = [sample.seconds for sample, _ in selected for _ in seats]
+        ocr = ocr_batch(crops, "name", tesseract, work)
+        return [select_nickname([(seconds, text, score, crop)])
+                for seconds, (text, score), crop in zip(times, ocr, crops)]
+    session, alphabet = model
+    anchors = []
+    for (sample, _), subset in zip(selected, range(0, len(crops), len(seats))):
+        for seat, pixels in zip(seats, crops[subset:subset + len(seats)]):
+            anchors.append([(sample.seconds, pixels)] if has_name_text(pixels, seat == "bottom") else [])
+    first_readings = frame_nickname_readings(anchors, session, alphabet)
+    later_candidates = []
+    for sample, frames in selected:
+        later = [(seconds, crops) for seconds, signature, dealer, crops in frames
+                 if 0 < seconds - sample.seconds <= 3 and same_pocket(sample.signature, signature)
+                 and (not sample.dealer or not dealer or sample.dealer == dealer)]
+        for seat_index, seat in enumerate(seats):
+            first = first_readings[len(later_candidates)]
+            if first and first[0][2] >= 93 and nickname(first[0][1]):
+                later_candidates.append([])
+                continue
+            # Check a few clean frames before spending time on more readings of the same label.
+            candidates = [(seconds, crops[seat_index]) for seconds, crops in later
+                          if has_name_text(crops[seat_index], seat == "bottom")]
+            later_candidates.append(candidates[:3])
+    later_readings = frame_nickname_readings(later_candidates, session, alphabet)
+    return [select_nickname(first + later) for first, later in zip(first_readings, later_readings)]
+
+
 def rank(text):
     value = text.strip().upper()
     if value == "10":
@@ -245,16 +392,16 @@ def rank(text):
 
 
 def choose_frames(candidates, tesseract, work):
-    samples = [sample for group in candidates for sample in group]
+    samples = [sample for group in candidates for sample in group.anchors]
     pots = ocr_batch([sample.crops["pot"] for sample in samples], "pot", tesseract, work)
     detected = [(sample, amount(text)) for sample, (text, _) in zip(samples, pots)]
     offset = 0
     selected = []
     for group in candidates:
-        matches = [sample for sample, pot in detected[offset:offset+len(group)] if pot == Decimal("1.5")]
-        offset += len(group)
+        matches = [sample for sample, pot in detected[offset:offset+len(group.anchors)] if pot == Decimal("1.5")]
+        offset += len(group.anchors)
         if matches:
-            selected.append(matches[0])
+            selected.append((matches[0], group.name_frames))
     return selected, len(samples)
 
 
@@ -271,17 +418,19 @@ def starting_blinds(seats, dealer, visible, readings):
     return (posted, "visible_blinds") if direct else ({}, "")
 
 
-def observations(selected, tesseract, work, layout, review_folder):
-    selected = sorted(selected, key=lambda sample: (sample.seconds, sample.table))
+def observations(selected, tesseract, work, layout, review_folder, model):
+    selected = sorted(selected, key=lambda pair: (pair[0].seconds, pair[0].table))
     seats = tuple(layout["seats"])
-    ranks = iter(ocr_batch([s.crops[f"rank{i}"] for s in selected for i in range(2)], "rank", tesseract, work))
+    ranks = iter(ocr_batch([s.crops[f"rank{i}"] for s, _ in selected for i in range(2)], "rank", tesseract, work))
+    names = iter(read_names(selected, tesseract, work, seats, model))
     fields = {}
-    for field in ("name", "stack", "blind"):
-        fields[field] = iter(ocr_batch([s.crops[f"{seat}.{field}"] for s in selected for seat in seats],
+    for field in ("stack", "blind"):
+        fields[field] = iter(ocr_batch([s.crops[f"{seat}.{field}"] for s, _ in selected for seat in seats],
                                        field, tesseract, work))
-    for snapshot_id, sample in enumerate(selected, 1):
+    for snapshot_id, (sample, _) in enumerate(selected, 1):
         first, second = rank(next(ranks)[0]), rank(next(ranks)[0])
-        card1, card2 = first + sample.suits[0], second + sample.suits[1]
+        suits = sample.signature[0]
+        card1, card2 = first + suits[0], second + suits[1]
         cards = f"{card1} {card2}" if first and second and card1 != card2 else ""
         readings = [{k: next(stream) for k, stream in fields.items()} for _ in seats]
         stacks = [amount(row["stack"][0]) for row in readings]
@@ -290,15 +439,21 @@ def observations(selected, tesseract, work, layout, review_folder):
             (review_folder / f"{snapshot_id:04}.jpg").write_bytes(sample.review_jpeg)
         for i, (seat, row, visible) in enumerate(zip(seats, readings, stacks)):
             starting = visible + posted.get(i, Decimal(0)) if visible is not None and method else None
+            name, confidence, name_seconds, support, status, raw_name, name_crop = next(names)
+            if review_folder and name_crop is not None:
+                path = review_folder / f"{snapshot_id:04}-{seat}.png"
+                image = Image.fromarray(name_crop)
+                image.resize((image.width * 4, image.height * 4), Image.Resampling.NEAREST).save(path)
             yield {
                 "snapshot_id": snapshot_id, "table": sample.table, "video_seconds": round(sample.seconds, 3),
-                "visual_seat": seat, "nickname_candidate": nickname(row["name"][0]),
-                "nickname_confidence": round(row["name"][1], 1), "visible_stack_bb": visible,
+                "visual_seat": seat, "nickname_candidate": name, "nickname_confidence": confidence,
+                "nickname_video_seconds": round(name_seconds, 3) if name_seconds is not None else None,
+                "nickname_support": support, "nickname_status": status, "visible_stack_bb": visible,
                 "starting_stack_bb": starting, "posted_blind_bb": posted.get(i),
                 "starting_stack_method": method if starting is not None else "",
                 "dealer_visual_seat": sample.dealer,
                 "recorded_player_cards": cards if seat == "bottom" else "", "pot_bb": "1.5",
-                "nickname_ocr": row["name"][0], "stack_ocr": row["stack"][0], "blind_ocr": row["blind"][0],
+                "nickname_ocr": raw_name, "stack_ocr": row["stack"][0], "blind_ocr": row["blind"][0],
             }
 
 
@@ -307,6 +462,7 @@ def main():
     parser.add_argument("video", type=Path)
     parser.add_argument("--layout", type=Path, default=PROFILE)
     parser.add_argument("--tesseract", type=Path, default=Path("tesseract"))
+    parser.add_argument("--nickname-model", type=Path, help="English PP-OCRv5 mobile recognition ONNX model")
     parser.add_argument("--output", type=Path, required=True, help="new folder for CSV and benchmark JSON")
     parser.add_argument("--start", type=float, default=0, help="start sampling at this video timestamp in seconds")
     parser.add_argument("--fps", type=float, default=4)
@@ -315,17 +471,22 @@ def main():
     try:
         if args.start < 0 or not 0 < args.fps <= 30:
             raise ValueError("start must be nonnegative and fps must be between 0 and 30")
+        if args.nickname_model is not None and not args.nickname_model.is_file():
+            raise ValueError("The nickname model file does not exist")
         layout = json.loads(args.layout.read_text(encoding="utf-8"))
         args.output.mkdir(parents=True, exist_ok=False)
         review_folder = args.output / "frames" if args.review_frames else None
         if review_folder:
             review_folder.mkdir()
         started, cpu = time.perf_counter(), time.process_time()
-        groups, frames, decoder_cpu = scan_frames(args.video, layout, args.start, args.fps, args.review_frames)
+        nickname_model = open_nickname_model(args.nickname_model) if args.nickname_model is not None else None
+        groups, frames, decoder_cpu = scan_frames(
+            args.video, layout, args.start, args.fps, args.review_frames, args.nickname_model is not None
+        )
         scanned = time.perf_counter()
         with tempfile.TemporaryDirectory(dir=args.output.resolve()) as tmp:
             selected, screened = choose_frames(groups, args.tesseract, Path(tmp))
-            rows = list(observations(selected, args.tesseract, Path(tmp), layout, review_folder))
+            rows = list(observations(selected, args.tesseract, Path(tmp), layout, review_folder, nickname_model))
         finished = time.perf_counter()
         with (args.output / "preflop.csv").open("w", encoding="utf-8-sig", newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=FIELD_COLUMNS)
@@ -336,6 +497,8 @@ def main():
             "sampled_frames": frames, "candidate_hands": len(groups), "candidate_frames_screened": screened,
             "blind_only_snapshots": len(selected), "seat_rows": len(rows),
             "nickname_candidates": sum(bool(row["nickname_candidate"]) for row in rows),
+            "nickname_backend": "ppocrv5_mobile" if args.nickname_model is not None else "tesseract",
+            "repeated_nickname_reads": sum(row["nickname_status"] == "repeated_ocr" for row in rows),
             "visible_stacks_read": sum(row["visible_stack_bb"] is not None for row in rows),
             "starting_stacks_estimated": sum(row["starting_stack_bb"] is not None for row in rows),
             "hole_card_pairs_read": sum(bool(row["recorded_player_cards"]) for row in rows),
