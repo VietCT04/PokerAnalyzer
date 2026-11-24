@@ -57,6 +57,10 @@ def parse_amount(value):
     return Decimal(match["number"].replace(",", "")), match["unit"]
 
 
+def wager_delta(kind, amount, committed):
+    return amount - committed if kind == "raises" else amount
+
+
 @dataclass
 class Seat:
     number: int
@@ -230,7 +234,7 @@ def parse_hand(lines):
             preflop_ok = False
 
         if kind in {"small blind", "big blind", "calls", "bets", "raises"}:
-            delta = value - committed[alias] if kind == "raises" else value
+            delta = wager_delta(kind, value, committed[alias])
             if delta <= 0 or seat.paid + delta > seat.stack:
                 money_ok = False
                 if street in {"setup", "preflop"}:

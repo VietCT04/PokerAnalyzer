@@ -93,3 +93,19 @@ Player statistics count a nickname once per hand. If several seats resolve to on
 - **Net winnings** equal collected payouts minus contributions after uncalled returns. They use only hands whose contributions, pot, fees and payouts reconcile. Tournament results are in chips. **bb/100** averages the net result in each qualifying hand's own big blinds and scales it to 100 hands.
 
 Coverage includes counts for identified appearances, recognized winners, usable preflop action, reconciled net and unlinked CSV rows. Empty statistic fields indicate zero qualifying opportunities or records for that metric. The parser targets standard English blinds-based GGPoker histories, including ordinary cash games and tournaments. Unrecognized action or incomplete ledgers can make a hand ineligible for some statistics. The stored raw action text supports inspection of variants such as straddles and special payouts.
+
+## River Bluff Deviation Index
+
+Expand **River Bluff Deviation Index** in the dashboard. Choose **Population** or an identified bettor, then choose a breakdown. You can also get the complete report as JSON.
+
+```sh
+python poker_analyzer.py --db research-data/poker.sqlite bdi
+```
+
+BDI is a showdown-based proxy in percentage points. For each qualifying bet, subtract `B / (P + 2B)` from the observed outcome, where `P` is the reconstructed pot before the bet and `B` is the matched amount after any uncalled return. The outcome is 1 for a bettor loss, 0.5 for a tie, and 0 for a bettor win. Multiplying the mean by 100 gives BDI. Zero corresponds to the polarized benchmark.
+
+The report uses one completed heads-up river decision per hand with a bet, a call, and a reconciled showdown payout. It includes decisions between other players. Raised river bets, side pots, multiple boards, and ambiguous outcomes are omitted. An equal payout to both finalists, allowing one odd chip, counts as a tie.
+
+Sizing percentages use the effective bet divided by the pot before it. The lower edge of each bucket is inclusive. The pot type comes from the number of preflop raises. Barrels count the consecutive streets ending at the river on which the bettor made an unraised bet.
+
+Bet-weighted results count every qualifying bet. Player-weighted results average the BDI of each identifiable bettor with equal weight in that breakdown. The dashboard gives both denominators and bins one overall BDI per identified bettor in the distribution. Nickname evidence comes from winners, which can favor identifying winning bettors. All figures describe the called showdowns present in the imported records.

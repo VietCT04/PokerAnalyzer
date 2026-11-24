@@ -7,12 +7,20 @@ const headers = [...document.querySelectorAll("th[data-key]")];
 const search = byId("search");
 const files = byId("files");
 const analyze = byId("analyze");
+const bdiPanel = byId("bdi-panel");
+const bdiScope = byId("bdi-scope");
+const bdiGroup = byId("bdi-group");
+const signed = new Intl.NumberFormat(undefined, {
+  signDisplay: "exceptZero", minimumFractionDigits: 1, maximumFractionDigits: 1,
+});
 let players = [];
 let sortKey = "observed_hands_in_unit";
 let ascending = false;
 let limit = 30;
 let lastJob = "";
 let dashboardRequest = 0;
+let bdiRequest = 0;
+let bdi = null;
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -52,6 +60,83 @@ function cell(row, value, detail = "", tone = "") {
     const small = document.createElement("small");
     small.textContent = detail;
     td.append(small);
+  }
+}
+
+function bdiCell(row, value, scale, detail = "") {
+  cell(row, value === null ? "—" : signed.format(value) + " pp", detail);
+  if (value === null) return;
+  const track = document.createElement("div");
+  track.className = "bdi-track";
+  track.setAttribute("aria-hidden", "true");
+  const bar = document.createElement("progress");
+  bar.className = value < 0 ? "bdi-negative" : "bdi-positive";
+  bar.max = scale;
+  bar.value = Math.abs(value);
+  track.append(bar);
+  row.lastElementChild.append(track);
+}
+
+function renderBDI() {
+  if (!bdi) return;
+  const player = Object.hasOwn(bdi.players, bdiScope.value) ? bdi.players[bdiScope.value] : null;
+  for (const option of bdiGroup.options) {
+    option.hidden = !!player && option.hasAttribute("data-population");
+  }
+  if (bdiGroup.selectedOptions[0].hidden) bdiGroup.value = "overall";
+  const group = bdiGroup.value;
+  const distribution = group === "distribution";
+  const breakdown = (player || bdi.population)[group];
+  const values = breakdown.flatMap((row) => player ? [row.bdi] : [row.bet_weighted, row.player_weighted]);
+  const scale = Math.max(10, Math.ceil(Math.max(0, ...values.map((value) => Math.abs(value || 0))) / 10) * 10);
+  byId("bdi-scale").textContent = distribution ? "" : `Chart scale ±${scale} pp`;
+  const headings = distribution ? ["Overall BDI range (pp)", "Bettors", "Bets"]
+    : player ? ["Category", "BDI", "Bets"] : ["Category", "Bet-weighted BDI", "Player-weighted BDI", "Bets"];
+  byId("bdi-head").replaceChildren(...headings.map((label) => {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = label;
+    return th;
+  }));
+  byId("bdi-rows").replaceChildren(...breakdown.map((item) => {
+    const row = document.createElement("tr");
+    cell(row, item.label);
+    if (distribution) cell(row, number.format(item.players));
+    else if (player) bdiCell(row, item.bdi, scale);
+    else {
+      bdiCell(row, item.bet_weighted, scale);
+      bdiCell(row, item.player_weighted, scale, item.players
+        ? `${countLabel(item.players, "bettor")} · ${countLabel(item.named_bets, "named bet")}` : "");
+    }
+    cell(row, number.format(item.bets));
+    return row;
+  }));
+  byId("bdi-note").textContent = player ? "Bets attributed to this nickname."
+    : distribution ? "One overall BDI per identified bettor. Bet counts sum across each range."
+      : "Bet-weighted includes all qualifying bets. Player-weighted gives each identified bettor equal weight. Nicknames come from winner evidence.";
+  byId("bdi-table").hidden = !breakdown.length;
+}
+
+async function loadBDI() {
+  const loading = ++bdiRequest;
+  const status = byId("bdi-status");
+  status.hidden = false;
+  status.textContent = "Analyzing called river bets…";
+  try {
+    const data = await request("/api/bdi");
+    if (loading !== bdiRequest) return;
+    bdi = data;
+    const selected = bdiScope.value;
+    bdiScope.replaceChildren(new Option("Population", ""), ...Object.keys(data.players)
+      .map((name) => new Option(name, name)));
+    if (Object.hasOwn(data.players, selected)) bdiScope.value = selected;
+    const bets = data.population.overall[0].bets;
+    byId("bdi-summary").textContent = countLabel(bets, "qualifying bet");
+    status.textContent = "No qualifying bets in the imported hands.";
+    status.hidden = !!bets;
+    renderBDI();
+  } catch (error) {
+    if (loading === bdiRequest) status.textContent = error.message;
   }
 }
 
@@ -108,6 +193,7 @@ function renderDashboard(data) {
   pending.textContent = countLabel(data.unlinked, "winner record") + " awaiting matching hand histories.";
   players = data.players;
   renderPlayers();
+  if (bdiPanel.open) loadBDI();
   if (data.analysis) renderAnalysis(data.analysis);
 }
 
@@ -223,6 +309,9 @@ search.addEventListener("input", () => {
   limit = 30;
   renderPlayers();
 });
+bdiPanel.addEventListener("toggle", () => { if (bdiPanel.open) loadBDI(); });
+bdiScope.addEventListener("change", renderBDI);
+bdiGroup.addEventListener("change", renderBDI);
 byId("more").addEventListener("click", () => {
   limit += 30;
   renderPlayers();

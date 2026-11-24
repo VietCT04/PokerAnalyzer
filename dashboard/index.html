@@ -59,6 +59,34 @@
       </dl>
       <p id="analysis-evidence"></p>
     </section>
+    <details class="panel bdi-panel" id="bdi-panel">
+      <summary>River Bluff Deviation Index <span id="bdi-summary"></span></summary>
+      <p class="bdi-description">A showdown-based proxy. Positive values mean the bettor lost more often than the benchmark, with ties counted as half a loss. Zero is the benchmark.</p>
+      <div class="bdi-controls">
+        <label>Scope
+          <select id="bdi-scope"><option value="">Population</option></select>
+        </label>
+        <label>Breakdown
+          <select id="bdi-group">
+            <option value="overall">Overall</option>
+            <option value="sizing">Bet sizing</option>
+            <option value="pot_type">Pot type</option>
+            <option value="stakes" data-population>Stakes</option>
+            <option value="barrels" data-population>Barrels</option>
+            <option value="distribution" data-population>Player distribution</option>
+          </select>
+        </label>
+        <p id="bdi-scale"></p>
+      </div>
+      <p class="bdi-description" id="bdi-note"></p>
+      <p class="bdi-description" id="bdi-status" role="status" hidden></p>
+      <div class="table-scroll">
+        <table id="bdi-table" hidden>
+          <thead><tr id="bdi-head"></tr></thead>
+          <tbody id="bdi-rows"></tbody>
+        </table>
+      </div>
+    </details>
     <section class="panel player-panel" aria-labelledby="players-title">
       <div class="player-heading">
         <div><h2 id="players-title">Player statistics</h2><p id="player-count">Identified nicknames</p></div>

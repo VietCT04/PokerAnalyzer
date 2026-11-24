@@ -24,6 +24,7 @@ from zipfile import BadZipFile
 from hand_history import HEADER, hands_in_zip, normalize_id
 from identity import DEFAULT_ACCOUNT, account_label
 from poker_analyzer import STATS_COLUMNS, connect, coverage_summary, import_batch, statistics
+from river_bdi import bdi_report
 
 
 PORT = 8766
@@ -248,7 +249,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.respond((ASSETS / filename).read_bytes(), mime + "; charset=utf-8")
             elif route == "/api/job":
                 self.send_json(self.server.job.snapshot())
-            elif route in ("/api/dashboard", "/stats.csv"):
+            elif route in ("/api/dashboard", "/api/bdi", "/stats.csv"):
                 with closing(connect(self.server.job.db_path)) as db:
                     db.execute("BEGIN")
                     if route == "/api/dashboard":
@@ -259,6 +260,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                             if summary.get("identity_model") == "timestamp":
                                 data["analysis"] = summary
                         self.send_json(data)
+                    elif route == "/api/bdi":
+                        self.send_json(bdi_report(db))
                     else:
                         stream = io.StringIO(newline="")
                         writer = csv.writer(stream)

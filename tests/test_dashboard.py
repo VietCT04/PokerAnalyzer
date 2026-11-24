@@ -101,6 +101,15 @@ class DashboardTest(unittest.TestCase):
         self.addCleanup(rejected.exception.close)
         self.assertEqual(rejected.exception.code, 403)
 
+    def test_bdi_endpoint_displays_an_empty_dataset(self):
+        data = self.data("/api/bdi")
+        self.assertEqual(data["players"], {})
+        self.assertEqual(data["population"]["overall"], [{
+            "label": "Overall", "bets": 0, "named_bets": 0, "players": 0, "bet_weighted": None,
+            "player_weighted": None,
+        }])
+        self.assertIn(b'id="bdi-panel"', self.request("/"))
+
     def test_analysis_tracks_new_hands_and_changed_mappings(self):
         original = self.server.job.db_path
         morning = self.downloads / "morning.zip"
