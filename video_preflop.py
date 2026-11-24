@@ -26,6 +26,8 @@ PROFILE = Path(__file__).with_name("examples") / "rush-video-layout.json"
 RANKS = "23456789TJQKA"
 AMOUNT = r"[0-9]{1,4}(?:[.,][0-9])?"
 BB = r"(?:BB|8B|B8|BE|8E)"
+NAME_FOLLOWUP_SECONDS = 7
+NAME_CONTINUITY_GAP = 0.75
 FIELD_COLUMNS = (
     "snapshot_id", "table", "video_seconds", "visual_seat", "nickname_candidate", "nickname_confidence",
     "nickname_video_seconds", "nickname_support", "nickname_status",
@@ -56,10 +58,8 @@ def card_color(crop):
     return "hdcs"[winner] if votes[winner] >= len(red) * 0.50 else ""
 
 
-def pockets(frame, layout, offset):
+def pocket_signature(frame, layout, offset):
     masks, suits = [], []
-    if white_pixels(region(frame, layout["board"], offset)).sum() > 105:
-        return None
     for card in layout["cards"]:
         mask = white_pixels(region(frame, card["rank"], offset))
         suit = card_color(region(frame, card["color"], offset))
@@ -106,6 +106,24 @@ class FrameSample:
 class HandSamples:
     anchors: list
     name_frames: list
+    followup_frames: list
+    last_confirmed: float | None
+
+    def followup_active(self, seconds):
+        return (
+            self.last_confirmed is not None
+            and seconds - self.last_confirmed <= NAME_CONTINUITY_GAP
+            and seconds - self.anchors[0].seconds <= NAME_FOLLOWUP_SECONDS
+        )
+
+    def confirm_followup(self, seconds, signature, dealer):
+        first = self.anchors[0]
+        if not same_pocket(first.signature, signature) or (first.dealer and dealer and first.dealer != dealer):
+            self.last_confirmed = None
+            return False
+        self.last_confirmed = seconds
+        # Extra readings require a visible dealer button in both frames, alongside matching cards.
+        return bool(dealer and dealer == first.dealer)
 
 
 def name_ink(crop, is_bottom):
@@ -188,11 +206,23 @@ def scan_frames(video, layout, start, fps, review, enhance_names):
             seconds = start + frames / fps
             frames += 1
             for table, offset in layout["tables"].items():
-                signature = pockets(frame, layout, offset)
+                previous = groups.get(table)
+                group = previous[2] if previous else None
+                following = enhance_names and group is not None and group.followup_active(seconds)
+                board_empty = white_pixels(region(frame, layout["board"], offset)).sum() <= 105
+                if not board_empty and not following:
+                    continue
+                signature = pocket_signature(frame, layout, offset)
                 if not signature:
                     continue
                 dealer = dealer_seat(frame, layout, offset)
-                previous = groups.get(table)
+                if following and group.confirm_followup(seconds, signature, dealer):
+                    beginning = group.anchors[0].seconds
+                    last_crop = group.followup_frames[-1][0] if group.followup_frames else beginning
+                    if seconds - beginning >= 1 and seconds - last_crop >= NAME_CONTINUITY_GAP:
+                        group.followup_frames.append(name_frame(frame, seconds, signature, dealer, offset, layout))
+                if not board_empty:
+                    continue
                 if previous:
                     previous_signature, last_seen, samples = previous
                     first = samples.anchors[0]
@@ -215,7 +245,7 @@ def scan_frames(video, layout, start, fps, review, enhance_names):
                             samples.name_frames.append(name_frame(frame, seconds, signature, dealer, offset, layout))
                         continue
                 anchor = snapshot(frame, seconds, table, offset, signature, dealer, layout, review, enhance_names)
-                samples = HandSamples([anchor], [])
+                samples = HandSamples([anchor], [], [], seconds if enhance_names and dealer else None)
                 groups[table] = (signature, seconds, samples)
                 captures.append(samples)
         decoder.wait()
@@ -400,6 +430,32 @@ def agree_on_wider_label(readings):
     return result
 
 
+def read_delayed_names(selected, seats, results, session, alphabet):
+    pending = {}
+    for hand_index, (sample, group) in enumerate(selected):
+        later = [(seconds, crops) for seconds, signature, dealer, crops in group.followup_frames
+                 if seconds > sample.seconds and sample.dealer and dealer == sample.dealer
+                 and same_pocket(sample.signature, signature)]
+        for seat_index, seat in enumerate(seats):
+            row_index = hand_index * len(seats) + seat_index
+            if results[row_index][4] != "unreadable":
+                continue
+            candidates = [(seconds, crops[seat_index][0]) for seconds, crops in later
+                          if has_name_text(crops[seat_index][0], seat == "bottom")]
+            if candidates:
+                pending[row_index] = candidates
+    readings_by_seat = frame_nickname_readings(list(pending.values()), session, alphabet)
+    for row_index, readings in zip(pending, readings_by_seat):
+        # Action badges can temporarily replace the nickname after the early snapshot.
+        visible_names = [reading for reading in readings if not re.fullmatch(
+            r"(?:check(?:ed)?|bet|muck(?:ed)?|show(?:ed)?|won|wins)(?:\s+\d+(?:[.,]\d+)?\s*bb)?",
+            reading[1].strip(), re.I
+        )]
+        candidate = select_nickname(visible_names)
+        if candidate[0]:
+            results[row_index] = (*candidate[:4], "delayed_name_ocr", *candidate[5:])
+
+
 def read_names(selected, tesseract, work, seats, model):
     crops = [sample.crops[f"{seat}.name"] for sample, _ in selected for seat in seats]
     if model is None:
@@ -415,8 +471,8 @@ def read_names(selected, tesseract, work, seats, model):
     first_readings = frame_nickname_readings(anchors, session, alphabet)
     later_candidates = []
     wider_candidates = []
-    for sample, frames in selected:
-        later = [(seconds, crops) for seconds, signature, dealer, crops in frames
+    for sample, group in selected:
+        later = [(seconds, crops) for seconds, signature, dealer, crops in group.name_frames
                  if 0 < seconds - sample.seconds <= 3 and same_pocket(sample.signature, signature)
                  and (not sample.dealer or not dealer or sample.dealer == dealer)]
         for seat_index, seat in enumerate(seats):
@@ -450,6 +506,7 @@ def read_names(selected, tesseract, work, seats, model):
         fallback = agree_on_wider_label(readings)
         if fallback[0]:
             results[i] = fallback
+    read_delayed_names(selected, seats, results, session, alphabet)
     return results
 
 
@@ -470,7 +527,7 @@ def choose_frames(candidates, tesseract, work):
         matches = [sample for sample, pot in detected[offset:offset+len(group.anchors)] if pot == Decimal("1.5")]
         offset += len(group.anchors)
         if matches:
-            selected.append((matches[0], group.name_frames))
+            selected.append((matches[0], group))
     return selected, len(samples)
 
 
@@ -595,6 +652,7 @@ def main():
             "nickname_backend": "ppocrv5_mobile" if args.nickname_model is not None else "tesseract",
             "repeated_nickname_reads": sum(row["nickname_status"] == "repeated_ocr" for row in rows),
             "wider_label_reads": sum(row["nickname_status"] == "wide_label_ocr" for row in rows),
+            "delayed_name_reads": sum(row["nickname_status"] == "delayed_name_ocr" for row in rows),
             "visible_stacks_read": sum(row["visible_stack_bb"] is not None for row in rows),
             "four_digit_stacks_checked": sum(row["stack_ocr_status"] == "checked" for row in rows),
             "starting_stacks_estimated": sum(row["starting_stack_bb"] is not None for row in rows),

@@ -214,6 +214,8 @@ def nickname_markup(row, output):
         evidence.append(f"{support} supporting frame" + ("s" if support != 1 else ""))
         if status == "wide_label_ocr":
             evidence.append("Wider label crop")
+        if status == "delayed_name_ocr":
+            evidence.append("Later frame from this hand")
         if row["nickname_confidence"] is not None:
             evidence.append(f'OCR score {row["nickname_confidence"]}')
     else:
