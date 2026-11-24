@@ -13,6 +13,7 @@ from itertools import groupby
 from pathlib import Path
 from zipfile import BadZipFile
 
+from betting_tendencies import tendencies_report
 from hand_history import ZERO, hands_in_zip, normalize_id, numeric_id, parse_hand, rush_export_scopes
 from identity import DEFAULT_ACCOUNT, account_label, ensure_identities, invalidate_identities
 from raw_store import archived_batches, batch_inputs, raw_dir, record_batch
@@ -371,6 +372,8 @@ def main(argv=None):
     scopes.add_argument("--session-map", type=Path, help="JSON object: TXT member path to verified session label")
     commands.add_parser("coverage", help="print mapping coverage and conflict evidence")
     commands.add_parser("bdi", help="print river BDI for the population and identified players as JSON")
+    tendencies = commands.add_parser("tendencies", help="print historical betting tendencies as JSON")
+    tendencies.add_argument("--player", help="report one exact nickname")
     stats = commands.add_parser("stats", help="query one identified nickname")
     stats.add_argument("nickname")
     export = commands.add_parser("export", help="write player statistics to a new CSV file")
@@ -419,6 +422,9 @@ def main(argv=None):
             elif args.command == "bdi":
                 db.execute("BEGIN")
                 print(json.dumps(bdi_report(db), indent=2))
+            elif args.command == "tendencies":
+                db.execute("BEGIN")
+                print(json.dumps(tendencies_report(db, args.player), indent=2))
             elif args.command == "stats":
                 rows = statistics(db, args.nickname)
                 if not rows:

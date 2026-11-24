@@ -97,6 +97,12 @@ progress::-moz-progress-bar { background: var(--accent); }
 .bdi-negative { right: 50%; transform: scaleX(-1); }
 .bdi-negative::-webkit-progress-value { background: var(--negative); }
 .bdi-negative::-moz-progress-bar { background: var(--negative); }
+.tendency-scroll { max-height: 30rem; overflow: auto; }
+.tendency-scroll thead { position: sticky; top: 0; z-index: 1; }
+.tendency-scroll th:nth-child(2), .tendency-scroll td:nth-child(2) { text-align: left; }
+.tendency-scroll td:first-child, .tendency-scroll td:nth-child(2) { max-width: 290px; white-space: normal; }
+.profile-link { font: inherit; text-align: left; cursor: pointer; border: 0; padding: 0; background: none; color: var(--accent); }
+.profile-link:hover { text-decoration: underline; }
 
 .player-heading { padding: 16px 18px 14px; }
 .search-label { display: grid; gap: 4px; color: var(--muted); font-size: .88rem; }

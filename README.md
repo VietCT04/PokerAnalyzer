@@ -102,10 +102,28 @@ Expand **River Bluff Deviation Index** in the dashboard. Choose **Population** o
 python poker_analyzer.py --db research-data/poker.sqlite bdi
 ```
 
-BDI is a showdown-based proxy in percentage points. For each qualifying bet, subtract `B / (P + 2B)` from the observed outcome, where `P` is the reconstructed pot before the bet and `B` is the matched amount after any uncalled return. The outcome is 1 for a bettor loss, 0.5 for a tie, and 0 for a bettor win. Multiplying the mean by 100 gives BDI. Zero corresponds to the polarized benchmark.
+BDI is a showdown-loss proxy in percentage points. For each qualifying bet, subtract `B / (P + 2B)` from the observed outcome, where `P` is the reconstructed pot before the bet and `B` is the matched amount after any uncalled return. The outcome is 1 for a bettor loss, 0.5 for a tie, and 0 for a bettor win. Multiplying the mean by 100 gives BDI. Zero corresponds to the polarized benchmark. A losing showdown can include a value bet.
 
 The report uses one completed heads-up river decision per hand with a bet, a call, and a reconciled showdown payout. It includes decisions between other players. Raised river bets, side pots, multiple boards, and ambiguous outcomes are omitted. An equal payout to both finalists, allowing one odd chip, counts as a tie.
 
 Sizing percentages use the effective bet divided by the pot before it. The lower edge of each bucket is inclusive. The pot type comes from the number of preflop raises. Barrels count the consecutive streets ending at the river on which the bettor made an unraised bet.
 
 Bet-weighted results count every qualifying bet. Player-weighted results average the BDI of each identifiable bettor with equal weight in that breakdown. The dashboard gives both denominators and bins one overall BDI per identified bettor in the distribution. Nickname evidence comes from winners, which can favor identifying winning bettors. All figures describe the called showdowns present in the imported records.
+
+## Historical betting tendencies
+
+Expand **Population Tendencies** or choose a nickname in **Player statistics**. Change the report and breakdown to see frequencies, bet outcomes, or summary statistics. The same report is available from the CLI.
+
+```sh
+python poker_analyzer.py --db research-data/poker.sqlite tendencies
+python poker_analyzer.py --db research-data/poker.sqlite tendencies --player "Example Alice"
+```
+
+- **Betting frequency** uses first decisions with a genuine chance to open the betting on that street. Preflop this includes raising before the first raise, including over limpers. On later streets the opportunity is to bet or check with no outstanding wager and somebody able to contest it. The pot type reflects the information available at that decision.
+- **Flop C-bet** uses the preflop aggressor's flop opening opportunities. Turn and river barrels use the opening opportunities of the preceding street's unraised bettor. Double and triple barrels additionally require that player to have been the preflop aggressor and to have bet each preceding postflop street without a raise.
+- **River probe** uses first-to-act opportunities after the preflop aggressor checked back the turn heads-up. **River bet after missed turn C-bet** uses river opening opportunities after a checked-through turn when the preflop aggressor made an unraised flop C-bet.
+- **BFD** compares the player's rate on matched opportunities with the average of comparable opponent rates weighted by those same player opportunities. Matches use position, stakes, street, pot type, earlier betting line and players still able to contest the pot. It excludes the selected nickname and unnamed records in account/session/token scopes associated with the nickname. Anonymous identities outside those scopes stay unknown. The dashboard shows the number of matches and leaves BFD blank when no comparison is available.
+- **Bet outcomes** follow the first wager on each street. For an opening raise, size uses the chips added by that action. Each size is relative to the pot immediately beforehand. A response raise takes priority over the eventual result. An unraised called bet can win by a later fold or by showdown. Side pots, separate board awards, cashouts and unresolved payouts can leave the final result unknown while preserving the recorded opening bet.
+- **Bet fold success** divides bets that won immediately against folds by bets with a known response. **Aggression frequency** uses bets and raises divided by bets, raises, calls and folds. WWSF uses players who saw the flop and whose payout is known. WTSD uses players who saw the flop in a complete hand. W$SD uses actual showdown participants with a known payout. Winning any share counts in WWSF and W$SD. [PokerTracker statistical reference](https://www.pokertracker.com/guides/PT3/general/statistical-reference-guide)
+
+The sizes follow the same bucket boundaries as BDI. Tendencies use the wager made on screen, while BDI uses the matched amount. Size breakdowns of hand results use players who made or faced the opening bet, with one appearance per hand per group. Street groups of hand results use players who reached that street after seeing the flop. Groups may overlap. The replay recognizes cash drops and first-board actions and keeps valid earlier observations when it encounters an unsupported action. The audit reports those cases separately. Population reports count named and unnamed records and show both counts.

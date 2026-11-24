@@ -110,6 +110,15 @@ class DashboardTest(unittest.TestCase):
         }])
         self.assertIn(b'id="bdi-panel"', self.request("/"))
 
+    def test_tendencies_endpoint_accepts_population_and_player_scopes(self):
+        population = self.data("/api/tendencies")
+        self.assertIsNone(population["nickname"])
+        self.assertEqual(population["outcomes"]["overall"][0]["samples"], 0)
+        player = self.data("/api/tendencies?player=Example%20Alice")
+        self.assertEqual(player["nickname"], "Example Alice")
+        self.assertIsNone(player["frequencies"]["overall"][0]["bfd"])
+        self.assertIn(b'id="tendency-panel"', self.request("/"))
+
     def test_analysis_tracks_new_hands_and_changed_mappings(self):
         original = self.server.job.db_path
         morning = self.downloads / "morning.zip"
